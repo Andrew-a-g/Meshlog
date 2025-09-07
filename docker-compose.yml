@@ -28,7 +28,7 @@ services:
 
   phpMyAdmin:                                                                                                                                                       
     depends_on:                                                                                                                                                     
-      - database                                                                                                                                                    
+      - db                                                                                                                                                    
     image: phpmyadmin                                                                                                                                               
     restart: unless-stopped                                                                                                                                         
     ports:                                                                                                                                                          
