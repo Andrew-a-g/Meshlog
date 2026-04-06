@@ -394,6 +394,7 @@ class MeshLogContact extends MeshLogObject {
 
         let imType = document.createElement("img");
         let spDate = document.createElement("span");
+        let spPrefix = document.createElement("span");
         let spHash = document.createElement("span");
         let spName = document.createElement("span");
         let spTelemetry = document.createElement("span");
@@ -408,6 +409,7 @@ class MeshLogContact extends MeshLogObject {
         divContact.append(imType);
         divContact.append(spHash);
         divContact.append(spName);
+        divContact.append(spPrefix);
         divContact.append(spTelemetry);
 
         let divDetailsType = document.createElement("div");
@@ -455,6 +457,7 @@ class MeshLogContact extends MeshLogObject {
             contactDate: spDate,
             contactHash: spHash,
             contactName: spName,
+            contactPrefix: spPrefix,
             contactIcon: imType,
             contactTelemetry: spTelemetry,
 
@@ -604,6 +607,17 @@ class MeshLogContact extends MeshLogObject {
         } else {
             this.dom.contactHash.classList.remove("prio-4");
             this.dom.contactHash.classList.remove("prio-5");
+        }
+
+        let sentAt = new Date(this.adv.data.sent_at).getTime();
+        let createdAt = new Date(this.adv.data.created_at).getTime();
+        if (Math.abs(sentAt - createdAt) > 1000 * 60 * 30) {
+            this.dom.contactPrefix.textContent = "⚠️";
+            this.dom.contactPrefix.classList.add('warn-icon')
+            createTooltip(this.dom.contactPrefix, `Clock out of sync. Sender time: ${this.adv.data.sent_at}`);
+        } else {
+            this.dom.contactPrefix.innerHTML = "";
+            this.dom.contactPrefix.classList.remove('warn-icon');
         }
 
         if (this.data.multibyte) {
@@ -970,7 +984,7 @@ class MeshLogReportedObject extends MeshLogObject {
         // Check message times
         let sentAt = new Date(this.data.sent_at).getTime();
         let createdAt = new Date(this.data.created_at).getTime();
-        if (Math.abs(sentAt - createdAt) > 1000 * 60 * 15) {
+        if (Math.abs(sentAt - createdAt) > 1000 * 60 * 30) {
             spPrefix.textContent = "⚠️";
             spPrefix.classList.add('warn-icon')
             createTooltip(spPrefix, `Clock out of sync. Sender time: ${this.data.sent_at}`);
@@ -1000,7 +1014,7 @@ class MeshLogReportedObject extends MeshLogObject {
         } else {
             // advert
             divLine1.append(spDate);
-            // divLine1.append(spPrefix);
+            divLine1.append(spPrefix);
             // divLine1.append(spTag);
             divLine1.append(spName);
         }
