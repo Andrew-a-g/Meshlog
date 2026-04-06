@@ -11,7 +11,7 @@ if ($err) {
 } else {
     $results = $meshlog->getContactsQuick(array(
         'offset' => 0, 
-        'count' => DEFAULT_COUNT,
+        'count' => DEFAULT_CONTACTS_COUNT,
         'after_ms' => getParam('after_ms', 0),
         'before_ms' => getParam('before_ms', 0),
     ));
