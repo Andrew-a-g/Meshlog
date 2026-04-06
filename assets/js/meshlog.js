@@ -1214,6 +1214,8 @@ class MeshLog {
         this.dom_logs.addEventListener('mouseout', this.handleMouseEvent);
         this.dom_logs.addEventListener("contextmenu", this.handleMouseEvent);
 
+        this.dom_warning.dataset.compact = "1";
+
         const menu = this.dom_contextmenu;
         document.addEventListener('click', function () {
             menu.style.display = 'none'; // Hide when clicking anywhere
@@ -1538,7 +1540,7 @@ class MeshLog {
         this.dom_warning_messages = document.createElement("div");
         this.dom_warning_messages.classList.add("warnings");
         this.dom_warning_messages_btn = document.createElement("button");
-        this.dom_warning_messages_btn.innerText = "Show less";
+        this.dom_warning_messages_btn.innerText = "Show more";
         this.dom_warning_messages_btn.classList.add("btn");
         this.dom_warning_messages_btn.onclick = (e) => {
             let str = "Show more";
