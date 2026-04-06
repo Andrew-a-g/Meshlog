@@ -1229,6 +1229,13 @@ class MeshLog {
         this.link_layers.addTo(this.map);
 
         this.last = '2025-01-01 00:00:00';
+
+        this.map.on("zoomend", () => {
+            this.link_layers.eachLayer((layer) => {
+                if (!layer.checkVisibility) return;
+                layer.checkVisibility();
+            });
+        });
     }
 
     handleMouseEvent(e) {
@@ -1333,14 +1340,23 @@ class MeshLog {
                 let filter = Settings.get('contactFilter.value', '').trim().toLowerCase();
                 if (filter) {
                     let cmp1 = item.dataset.name.toLowerCase().includes(filter);
-                    let cmp2 = item.dataset.hash.toLowerCase().includes(filter);
+                    let cmp2 = item.dataset.pubkey.toLowerCase().includes(filter);
                     hidden = !cmp1 && !cmp2;
+
+                    // special selector
+                    if (filter == '{multibyte}') {
+                        hidden = item.dataset.multibyte == '0';
+                    } else if (filter == '{singlebyte}') {
+                        hidden = item.dataset.multibyte == '1';
+                    }
                 }
             }
+
 
             item.hidden = hidden;
             this.dom_contacts.appendChild(item)
         });
+        this.fadeMarkers();
     }
 
     __init_contact_order() {
@@ -1901,6 +1917,17 @@ class MeshLog {
         const empty = this.visible_markers.size < 1;
         Object.entries(this.contacts).forEach(([k,v]) => {
             if (!v.marker) return;
+
+            if (v.dom && v.dom.container) {
+                let hidden = v.dom.container.hidden;
+
+                if (hidden) {
+                    this.map.removeLayer(v.marker);
+                } else {
+                    v.marker.addTo(this.map);
+                }
+            }
+
             if (empty || this.visible_markers.has(v.data.id)) {
                 v.marker.setOpacity(1);
                 v.marker.setZIndexOffset(1000);
@@ -1962,7 +1989,7 @@ class MeshLog {
         const ln_decor_weight = 3;
         const ln_decor_outline = 5;
         const ln_offset = 8;
-        const ln_repeat = 150;
+        const ln_repeat = 250;
 
         const linkColor =  '#555';
         const linkStrokeColor = '#fff';
@@ -2047,13 +2074,11 @@ class MeshLog {
                 }
 
                 if (!decors[line_uid].includes(decor_id)) {
-                    const offset = ln_offset * decors[line_uid].length; // TODO - should increase per 
+                    const offset = ln_offset * decors[line_uid].length;
                     decors[line_uid].push(decor_id);
 
                     const strokeColor = path.reporter.getStyle().stroke ?? linkStrokeColor;
-
-                    const decorator1 = L.polylineDecorator(line1, {
-                        patterns: [
+                    const patterns = [
                         {
                             offset: offset,
                             repeat: ln_repeat,
@@ -2072,12 +2097,27 @@ class MeshLog {
                                 pathOptions: { renderer: this.canvas_renderer, stroke: true, color: path.reporter.getStyle().color, weight: ln_decor_weight }
                             })
                         }
-                    ]
+                    ];
+                    const decorator1 = L.polylineDecorator(line1, {
+                        patterns
                     });
 
-                    if (this.decor) {
-                        decorator1.addTo(this.link_layers);
+                    decorator1.checkVisibility = () => {
+                        let visible = meshlog.decor;
+
+                        if (visible) {
+                            const p1 = meshlog.map.latLngToLayerPoint(linePath[0]);
+                            const p2 = map.latLngToLayerPoint(linePath[1]);
+                            const pDist = p1.distanceTo(p2);
+
+                            visible = offset < pDist;
+                        }
+
+                        decorator1.setPatterns(visible ? patterns : []);
                     }
+
+                    decorator1.checkVisibility();
+                    decorator1.addTo(this.link_layers);
                 }
 
                 // Markers
