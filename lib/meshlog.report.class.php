@@ -13,12 +13,48 @@ class MeshLogReport extends MeshLogEntity {
     public $received_at = null;
     public $created_at = null;
 
+    public static function fixPathFormat($path, $hash_len) {
+        $path = str_replace(',', '', $path);
+        $bytes = str_split($path, 2);
+        $groups = array_chunk($bytes, $hash_len);
+        $groups = array_map(function($g) {
+            return implode('', $g);
+        }, $groups);
+        return implode(',', $groups);
+    }
+
     public static function fromJson($data, $meshlog) {
         $m = new static($meshlog);
 
         $m->path = $data['message']['path'] ?? null;
         $m->snr = $data['snr'] ?? null;
         $m->received_at = Utils::time2str($data['time']['local']) ?? null;
+
+        if (array_key_exists("hash_size", $data)) {
+            $hsize = intval($data["hash_size"]);
+            $m->path = MeshLogReport::fixPathFormat($m->path, $hsize);
+
+            if ($hsize > 1) {
+                $parts = explode(",", $m->path);
+                foreach ($parts as $part) {
+                    if (strlen($part) < 4) continue;
+
+                    $tableStr = MeshLogContact::getTable();
+
+                    $search = $part . "%";
+                    $query = $meshlog->pdo->prepare("SELECT * FROM $tableStr WHERE LOWER(public_key) LIKE LOWER(:search) ORDER BY id DESC");
+                    $query->bindParam(':search', $search, PDO::PARAM_STR);
+                    $query->execute();
+
+                    $rows = $query->fetchAll(PDO::FETCH_ASSOC);
+                    if (sizeof($rows) == 1) {
+                        $row = $rows[0];
+                        $update = $meshlog->pdo->prepare("UPDATE $tableStr SET multibyte = 1 WHERE id = :id");
+                        $update->execute([':id' => $row['id']]);
+                    }
+                }
+            }
+        }
 
         return $m;
     }

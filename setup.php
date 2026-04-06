@@ -10,6 +10,7 @@
     include 'migrations/005_add_reporter_style.php';
     include 'migrations/006_add_contact_last_heard.php';
     include 'migrations/007_add_hash_size.php';
+    include 'migrations/008_add_multibyte_flag.php';
 
     // Must be in order!
     $migrationClasses = array(
@@ -21,6 +22,7 @@
         'Migration_005',
         'Migration_006',
         'Migration_007',
+        'Migration_008',
     );
 
     session_start();

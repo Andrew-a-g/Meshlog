@@ -7,6 +7,7 @@ class MeshLogContact extends MeshLogEntity {
     public $enabled = null;
     public $name = null;
     public $hash_size = null;
+    public $multibyte = null;
     public $last_heard_at = null;
     public $created_at = null;
 
@@ -15,6 +16,8 @@ class MeshLogContact extends MeshLogEntity {
         
         if (!isset($data['contact'])) return $m;
         $m->public_key = $data['contact']['pubkey'] ?? null;
+        $m->hash_size = $data['hash_size'] ?? 1;
+        $m->multibyte = $m->hash_size > 1;
         $m->enabled = true; // default
 
         return $m;
@@ -29,6 +32,7 @@ class MeshLogContact extends MeshLogEntity {
         $m->name = $data['name'];
         $m->enabled = $data['enabled'];
         $m->hash_size = $data['hash_size'];
+        $m->multibyte = $data['multibyte'];
         $m->created_at = $data['created_at'];
         $m->last_heard_at = $data['last_heard_at'];
 
@@ -46,16 +50,20 @@ class MeshLogContact extends MeshLogEntity {
             'public_key' => $this->public_key,
             'name' => $this->name,
             'hash_size' => $this->hash_size,
+            'multibyte' => $this->multibyte,
             'created_at' => $this->created_at,
             'last_heard_at' => $this->last_heard_at,
         );
     }
 
     protected function getParams() {
+        $mb = $this->multibyte;
+        if ($mb == '') $mb = 0;
         return array(
             "public_key" => array($this->public_key, PDO::PARAM_STR),
             "name" => array($this->name, PDO::PARAM_STR),
             "hash_size" => array($this->hash_size, PDO::PARAM_INT),
+            "multibyte" => array($mb, PDO::PARAM_INT),
             "enabled" => array($this->enabled, PDO::PARAM_STR),
         );
     }

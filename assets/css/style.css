@@ -140,6 +140,11 @@ h2 {
     color:rgb(139, 112, 151);
 }
 
+.t-mb {
+    color: #d87dff;
+}
+
+
 .m {
     display: inline-block;
 }
@@ -417,6 +422,10 @@ h2 {
     background: #fff;
     position: absolute;
     border-radius: 50%;
+}
+
+.marker-pin.multibyte {
+    background: #d87dff;
 }
 
 .marker-pin.missing {

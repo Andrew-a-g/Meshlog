@@ -531,7 +531,11 @@ class MeshLogContact extends MeshLogObject {
                 icdivch1.classList.add("missing");
             } else if (this.isExpired()) {
                 icdivch1.classList.add("ghosted");
+            } else if (this.data.multibyte) {
+                icdivch1.classList.add("multibyte");
             }
+        } else if (this.data.multibyte) {
+            icdivch1.classList.add("multibyte");
         }
 
         let icon = L.divIcon({
@@ -578,6 +582,8 @@ class MeshLogContact extends MeshLogObject {
         this.dom.container.dataset.time = this.last.time;
         this.dom.container.dataset.name = this.__removeEmojis(this.adv.data.name).trim();
         this.dom.container.dataset.hash = hashstr;
+        this.dom.container.dataset.pubkey = this.data.public_key;
+        this.dom.container.dataset.multibyte = this.data.multibyte;
         this.dom.container.dataset.first_seen = new Date(this.data.created_at).getTime();
 
         this.dom.details.hidden = !this.expanded;
@@ -600,6 +606,9 @@ class MeshLogContact extends MeshLogObject {
             this.dom.contactHash.classList.remove("prio-5");
         }
 
+        if (this.data.multibyte) {
+            this.dom.contactName.classList.add('t-mb');
+        }
 
         let type = '';
         if (this.isClient()) {
@@ -975,6 +984,11 @@ class MeshLogReportedObject extends MeshLogObject {
         spText.classList.add(...['sp']);
         spText.classList.add(...text.classList);
         spText.innerHTML = text.text.linkify();
+
+        if (this.data.hash_size > 1) {
+            spName.classList.add('t-mb');
+            spTag.classList.add('t-mb');
+        }
 
         if (text.text) {
             // message
