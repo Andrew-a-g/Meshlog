@@ -570,3 +570,7 @@ h2 {
     display: none;
     z-index: 9999;
 }
+
+.dark-tiles {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}

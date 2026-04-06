@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="strict-origin">
     <link id="favicon" rel="icon" type="image/x-icon" href="assets/favicon/faviconw.ico">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
@@ -18,9 +19,9 @@
         integrity="sha256-b6wRq6tXNDnatickDjAMTffu2ZO2lsaV5Aivm+oh2s4="
         crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.min.js"></script>
-    <script src="assets/js/meshlog.js"></script>
-    <link rel="stylesheet" href="assets/css/style.css">
-    <title>MeshCore Log v1.99.1</title>
+    <script src="assets/js/meshlog.js?v=<?=filemtime("assets/js/meshlog.js")?>"></script>
+    <link rel="stylesheet" href="assets/css/style.css?v=<?=filemtime("assets/css/style.css")?>">
+    <title>MeshLog</title>
 </head>
 <body>
 
@@ -35,20 +36,22 @@
 </div>
 <div id="midbar">
     <div class="resize-bar" id="leftdrag"></div>
-    <div id="map"></div>
-    <div id="warning" hidden></div>
+    <div id="map">
+        <div id="warning" hidden></div>
+    </div>
     <div class="resize-bar" id="rightdrag"></div>
 </div>
 <div id="rightbar">
     <div class="settings" id="settings-contacts">
     </div>
-    <div class="settings" id="about">MeshLog Web v1.99</div>
+    <div class="settings" id="about">MeshLog Web</div>
     <div id="contacts"></div>
 </div>
 
 <div id="context-menu" class="menu">
 </div>
 </div>
+<span id="header" style="position: fixed; top: 40px; right: 48px;"></span>
 <script>
 
 // Setup linkifyjs default options (default to ouse page)
@@ -210,10 +213,39 @@ const formatedTimestamp = (d=new Date())=> {
 }
 
 var map = L.map('map').setView([56.96894, 24.14520], 10);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+let layerOsm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
+    crossOrigin: true,
     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-}).addTo(map);
+});
+
+let layerOsmDark = L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    crossOrigin: true,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+});
+
+let layerOsmLight = L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png ', {
+    maxZoom: 19,
+    crossOrigin: true,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+});
+
+let layerOsmD = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    crossOrigin: true,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    className: 'dark-tiles'
+});
+
+var layerControl = L.control.layers({
+    "OpenStreetMap": layerOsm,
+    "OpenStreetMap (CSS-Filter Dark)": layerOsmD,
+    "OpenStreetMap (carto Light)": layerOsmLight,
+    "OpenStreetMap (Carto Dark)": layerOsmDark,
+}, {}).addTo(map);
+
+layerOsm.addTo(map);
 
 var meshlog = new MeshLog(
     map,
