@@ -54,7 +54,76 @@ class MeshLogReporter extends MeshLogObject {
     }
 
     getStyle() {
-        return JSON.parse(this.data.style);
+        if (typeof this.data.style === "object" && this.data.style !== null) {
+            return this.data.style;
+        }
+
+        try {
+            return JSON.parse(this.data.style ?? "{}");
+        } catch (error) {
+            return {
+                color: this.data.style ?? "#888"
+            };
+        }
+    }
+
+    getSettingsKey() {
+        return `reporters.${this.data.id}.enabled`;
+    }
+
+    isEnabled() {
+        return Settings.getBool(this.getSettingsKey(), true);
+    }
+
+    createSettingsDom(recreate = false) {
+        if (this.dom?.settings && !recreate) return this.dom.settings;
+
+        if (this.dom?.settings?.container?.parentNode) {
+            this.dom.settings.container.parentNode.removeChild(this.dom.settings.container);
+        }
+
+        let container = document.createElement("label");
+        let input = document.createElement("input");
+        let name = document.createElement("span");
+
+        container.classList.add("reporter-filter-item");
+        input.type = "checkbox";
+        input.checked = this.isEnabled();
+        input.onchange = (e) => {
+            Settings.set(this.getSettingsKey(), e.target.checked);
+            this._meshlog.onReporterFilterChanged();
+        };
+
+        name.classList.add("reporter-filter-name");
+        name.innerText = this.data.name;
+
+        container.append(input);
+        container.append(name);
+
+        this.dom = this.dom ?? {};
+        this.dom.settings = {
+            container,
+            input,
+            name,
+        };
+
+        this.updateSettingsDom();
+        return this.dom.settings;
+    }
+
+    updateSettingsDom() {
+        if (!this.dom?.settings) return;
+
+        const style = this.getStyle();
+        const textColor = style.color ?? "#888";
+        const strokeColor = style.stroke ?? textColor;
+        const strokeWeight = style.weight ?? "1px";
+
+        this.dom.settings.input.checked = this.isEnabled();
+        this.dom.settings.container.style.color = textColor;
+        this.dom.settings.name.style.color = textColor;
+        this.dom.settings.container.style.border = `solid ${strokeWeight} ${strokeColor}`;
+        this.dom.settings.container.classList.toggle("disabled", !this.isEnabled());
     }
 
     getContactId() {
@@ -252,6 +321,7 @@ class MeshLogContact extends MeshLogObject {
 
                 let reporter = this._meshlog.reporters[r.data.reporter_id] ?? false;
                 if (!reporter) return;
+                if (!reporter.isEnabled()) return;
                 
 
                 // If message is from this contact, neighbor is first path hash
@@ -582,6 +652,7 @@ class MeshLogContact extends MeshLogObject {
         let hashstr = this.hash;
 
         this.dom.container.dataset.type = this.adv.data.type;
+        this.dom.container.dataset.contactId = this.data.id;
         this.dom.container.dataset.time = this.last.time;
         this.dom.container.dataset.name = this.__removeEmojis(this.adv.data.name).trim();
         this.dom.container.dataset.hash = hashstr;
@@ -780,13 +851,20 @@ class MeshLogReport {
     }
 
     showPath() {
+        if (!this.isEnabled()) return;
         let sender = this._meshlog.contacts[this.contact_id] ?? false;
         let receiver = this._meshlog.reporters[this.data.reporter_id];
+        if (!receiver) return;
         this._meshlog.showPath(this.data.id, this.data.path, sender, receiver);
     }
 
     hidePath() {
         this._meshlog.hidePath(this.data.id);
+    }
+
+    isEnabled() {
+        let reporter = this._meshlog.reporters[this.data.reporter_id] ?? false;
+        return reporter ? reporter.isEnabled() : false;
     }
 
     createDom(recreate = false) {
@@ -799,6 +877,7 @@ class MeshLogReport {
 
         let reporter = this._meshlog.reporters[this.data.reporter_id] ?? false;
         if (!reporter) return null;
+        if (!reporter.isEnabled()) return null;
 
         let divReport = document.createElement("div");
         let spDate = document.createElement("span");
@@ -844,6 +923,7 @@ class MeshLogReport {
     static onmouseout(e) {
         if (this.parent.dom.input.show.checked) return;
         this.hidePath();
+        this._meshlog.updatePaths();
     }
 
     static oncontextmenu(e) {
@@ -918,6 +998,14 @@ class MeshLogReportedObject extends MeshLogObject {
             let report = reports[i];
             this.reports.push(new MeshLogReport(meshlog, report, data.contact_id, this));
         }
+    }
+
+    getVisibleReports() {
+        return this.reports.filter(report => report.isEnabled());
+    }
+
+    hasVisibleReports() {
+        return this.getVisibleReports().length > 0;
     }
 
     // Override!
@@ -1050,18 +1138,19 @@ class MeshLogReportedObject extends MeshLogObject {
 
         this.dom.container.hidden = !this.isVisible();
         this.dom.reports.hidden = !this.expanded;
+        const visibleReports = this.getVisibleReports();
+
+        while (this.dom.reports.firstChild) {
+            this.dom.reports.removeChild(this.dom.reports.firstChild);
+        }
 
         if (this.expanded) {
-            for (let i=0; i<this.reports.length; i++) {
-                let report = this.reports[i];
+            for (let i=0; i<visibleReports.length; i++) {
+                let report = visibleReports[i];
                 let dom = report.createDom(false);
                 if (dom) {
                     this.dom.reports.append(dom.container);
                 }
-            }
-        } else {
-            while (this.dom.reports.firstChild) {
-                this.dom.reports.removeChild(this.dom.reports.firstChild);
             }
         }
     }
@@ -1077,8 +1166,9 @@ class MeshLogReportedObject extends MeshLogObject {
 
     static onmouseover(e) {
         // show paths
-        for (let i=0;i<this.reports.length;i++) {
-            this.reports[i].showPath();
+        const visibleReports = this.getVisibleReports();
+        for (let i=0;i<visibleReports.length;i++) {
+            visibleReports[i].showPath();
         }
         this._meshlog.updatePaths();
     }
@@ -1086,8 +1176,9 @@ class MeshLogReportedObject extends MeshLogObject {
     static onmouseout(e) {
         // hide path
         if (this.dom.input.show.checked) return;
-        for (let i=0;i<this.reports.length;i++) {
-            this.reports[i].hidePath();
+        const visibleReports = this.getVisibleReports();
+        for (let i=0;i<visibleReports.length;i++) {
+            visibleReports[i].hidePath();
         }
         this._meshlog.updatePaths();
     }
@@ -1101,7 +1192,7 @@ class MeshLogAdvertisement extends MeshLogReportedObject {
     getName() { return {text: this.data.name, classList: []}; }
     getText() { return {text: "", classList: []}; }
     getPathTag() { return "ADV"; }
-    isVisible() { return Settings.getBool('messageTypes.advertisements', true); }
+    isVisible() { return Settings.getBool('messageTypes.advertisements', true) && this.hasVisibleReports(); }
 }
 
 class MeshLogChannelMessage extends MeshLogReportedObject {
@@ -1122,7 +1213,7 @@ class MeshLogChannelMessage extends MeshLogReportedObject {
         let chid = this.data.channel_id;
         let ch = this._meshlog.channels[chid] ?? false;
         if (ch) ch = ch.isEnabled();
-        return Settings.getBool('messageTypes.channel', true) && ch;
+        return Settings.getBool('messageTypes.channel', true) && ch && this.hasVisibleReports();
     }
 }
 
@@ -1130,8 +1221,9 @@ class MeshLogDirectMessage extends MeshLogReportedObject {
     static idPrefix = "d";
     getTag()  {
         let text = '→ unknown';
-        if (this.reports.length > 0) {
-            let repid = this.reports[0].data.reporter_id;
+        let reports = this.getVisibleReports();
+        if (reports.length > 0) {
+            let repid = reports[0].data.reporter_id;
             let reporter = this._meshlog.reporters[repid] ?? false;
             if (reporter) {
                 text = `→ ${reporter.data.name}`;
@@ -1145,7 +1237,7 @@ class MeshLogDirectMessage extends MeshLogReportedObject {
     getName() { return {text: `${this.data.name}`, classList: ['t-bright'], background: str2color(this.data.name) }; }
     getText() { return {text: this.data.message, classList: ['t-white']}; }
     getPathTag() { return "DIR"; }
-    isVisible() { return Settings.getBool('messageTypes.direct', false); }
+    isVisible() { return Settings.getBool('messageTypes.direct', false) && this.hasVisibleReports(); }
 }
 
 class MeshLogLinkLayer {
@@ -1159,7 +1251,7 @@ class MeshLogLinkLayer {
 
 
 class MeshLog {
-    constructor(map, logsid, contactsid, stypesid, sreportersid, scontactsid, warningid, errorid, contextmenuid) {
+    constructor(map, logsid, contactsid, stypesid, sreporterfilterid, sreportersid, scontactsid, warningid, errorid, contextmenuid) {
         this.reporters = {};
         this.contacts = {};
         this.channels = {};
@@ -1201,6 +1293,7 @@ class MeshLog {
          
 
         this.dom_settings_types = document.getElementById(stypesid);
+        this.dom_settings_reporter_filter = document.getElementById(sreporterfilterid);
         this.dom_settings_reporters = document.getElementById(sreportersid);
         this.dom_settings_contacts = document.getElementById(scontactsid);
 
@@ -1222,6 +1315,7 @@ class MeshLog {
         });
 
         this.__init_message_types();
+        this.__init_reporter_filter();
         this.__init_contact_order();
         this.__init_contact_types();
         this.__init_warnings();
@@ -1315,8 +1409,135 @@ class MeshLog {
         return div;
     }
 
+    __init_reporter_filter() {
+        let summary = document.createElement("span");
+        let button = document.createElement("button");
+        let panel = document.createElement("div");
+
+        summary.classList.add("reporter-filter-summary");
+        button.classList.add("btn", "reporter-filter-toggle");
+        button.type = "button";
+        button.innerText = "Settings";
+        panel.classList.add("reporter-filter-panel");
+        panel.hidden = true;
+
+        button.onclick = (e) => {
+            e.stopPropagation();
+            panel.hidden = !panel.hidden;
+        };
+
+        panel.onclick = (e) => {
+            e.stopPropagation();
+        };
+
+        this.dom_settings_reporter_filter.onclick = (e) => {
+            e.stopPropagation();
+        };
+
+        document.addEventListener("click", () => {
+            panel.hidden = true;
+        });
+
+        this.dom_settings_reporter_filter.append(summary);
+        this.dom_settings_reporter_filter.append(button);
+        this.dom_settings_reporter_filter.append(panel);
+
+        this.dom_reporter_filter = {
+            summary,
+            button,
+            panel,
+        };
+
+        this.updateReporterFilterDom();
+    }
+
+    updateReporterFilterDom() {
+        if (!this.dom_reporter_filter) return;
+
+        const reporters = Object.values(this.reporters)
+            .sort((a, b) => a.data.name.localeCompare(b.data.name));
+        const enabled = reporters.filter(reporter => reporter.isEnabled()).length;
+
+        this.dom_reporter_filter.summary.innerText = `Enabled reporters: ${enabled}/${reporters.length}`;
+
+        while (this.dom_reporter_filter.panel.firstChild) {
+            this.dom_reporter_filter.panel.removeChild(this.dom_reporter_filter.panel.firstChild);
+        }
+
+        for (const reporter of reporters) {
+            const dom = reporter.createSettingsDom(false);
+            reporter.updateSettingsDom();
+            this.dom_reporter_filter.panel.append(dom.container);
+        }
+    }
+
+    getVisibleContactIdsByReporter() {
+        const visible = new Set();
+
+        for (const reporter of Object.values(this.reporters)) {
+            if (!reporter.isEnabled()) continue;
+
+            const contactId = reporter.getContactId();
+            if (contactId !== -1) {
+                visible.add(String(contactId));
+            }
+        }
+
+        for (const contact of Object.values(this.contacts)) {
+            if (contact.adv?.hasVisibleReports && contact.adv.hasVisibleReports()) {
+                visible.add(String(contact.data.id));
+            }
+        }
+
+        for (const msg of Object.values(this.messages)) {
+            if (!msg.hasVisibleReports || !msg.hasVisibleReports()) continue;
+            if (msg.data.contact_id === undefined || msg.data.contact_id === null) continue;
+            visible.add(String(msg.data.contact_id));
+        }
+
+        return visible;
+    }
+
+    refreshVisibleNeighborPaths() {
+        const visibleContactIds = this.getVisibleContactIdsByReporter();
+        const visibleNeighbors = Object.values(this.contacts)
+            .filter(contact => contact.neighbors_visible);
+
+        for (const contact of visibleNeighbors) {
+            const prefix = contact.getLayerDescPrefix();
+            Object.keys(this.layer_descs).forEach(key => {
+                if (key.startsWith(prefix)) {
+                    delete this.layer_descs[key];
+                }
+            });
+            contact.neighbors_visible = false;
+        }
+
+        for (const contact of visibleNeighbors) {
+            if (visibleContactIds.has(String(contact.data.id))) {
+                contact.showNeighbors();
+            }
+        }
+    }
+
     __onTypesChanged() {
         this.updateMessagesDom();
+    }
+
+    onReporterFilterChanged() {
+        for (const msg of Object.values(this.messages)) {
+            for (const report of msg.reports) {
+                if (!report.isEnabled()) {
+                    report.hidePath();
+                }
+            }
+        }
+
+        this.updateReporterFilterDom();
+        this.updateMessagesDom();
+        this.updateContactsDom();
+        this.refreshVisibleNeighborPaths();
+        this.updatePaths();
     }
 
     sortContacts(fn=undefined, reverse=false) {
@@ -1326,11 +1547,13 @@ class MeshLog {
         }
 
         const items = Array.from(this.dom_contacts.children);
+        const visibleContactIds = this.getVisibleContactIdsByReporter();
         items.sort(fn);
         if (reverse) items.reverse();
         items.forEach(item => {
             let type = parseInt(item.dataset.type);
             let hidden = false;;
+            if (!visibleContactIds.has(item.dataset.contactId)) { hidden = true; }
             if (type == 1 && !Settings.getBool('contactTypes.clients', true)) { hidden = true; }
             else if (type == 2 && !Settings.getBool('contactTypes.repeaters', true)) { hidden = true; }
             else if (type == 3 && !Settings.getBool('contactTypes.rooms', true)) { hidden = true; }
@@ -1541,15 +1764,11 @@ class MeshLog {
     }
 
     __init_reporters() {
-        Object.entries(this.reporters).forEach(([id,_]) => {
-            let reporter = this.reporters[id];
-            if (reporter.hasOwnProperty('dom')) {
-                return;
-            }
-            const self = this;
-            this.reporters[id].enabled = true;
-            this.dom_settings_reporters.hidden = true;
+        Object.values(this.reporters).forEach(reporter => {
+            reporter.createSettingsDom(false);
+            reporter.updateSettingsDom();
         });
+        this.updateReporterFilterDom();
     }
 
     __init_warnings() {
@@ -2137,6 +2356,8 @@ class MeshLog {
     // Only adds descriptors, not layers
     showPath(id, path, src, reporter) {
         if (this.layer_descs.hasOwnProperty(id)) return;
+        if (!reporter) return;
+        if (reporter.isEnabled && !reporter.isEnabled()) return;
 
         let hashes = path ? path.split(',') : [];
         let prev = {

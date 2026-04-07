@@ -28,6 +28,8 @@
 <div id="error"></div>
 <div id="container">
 <div id="leftbar">
+    <div class="settings" id="settings-reporter-filter">
+    </div>
     <div class="settings" id="settings-types">
     </div>
     <div class="settings" id="settings-reporters">
@@ -252,6 +254,7 @@ var meshlog = new MeshLog(
     "logs",
     "contacts",
     "settings-types",
+    "settings-reporter-filter",
     "settings-reporters",
     "settings-contacts",
     "warning",

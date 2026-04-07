@@ -702,7 +702,21 @@ class MeshLog {
                         'type', a.type,
                         'flags', a.flags,
                         'sent_at', a.sent_at,
-                        'created_at', a.created_at
+                        'created_at', a.created_at,
+                        'reports', COALESCE((
+                            SELECT JSON_ARRAYAGG(
+                                JSON_OBJECT(
+                                    'id', ar.id,
+                                    'reporter_id', ar.reporter_id,
+                                    'snr', ar.snr,
+                                    'path', ar.path,
+                                    'received_at', ar.received_at,
+                                    'created_at', ar.created_at
+                                )
+                            )
+                            FROM advertisement_reports ar
+                            WHERE ar.advertisement_id = a.id
+                        ), JSON_ARRAY())
                     )
                     FROM advertisements a
                     WHERE a.contact_id = t.id
