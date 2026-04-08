@@ -1113,6 +1113,10 @@ class MeshLogReportedObject extends MeshLogObject {
         return this.getVisibleReports().length > 0;
     }
 
+    isSenderVisible() {
+        return this._meshlog.isContactVisible(this.data.contact_id, this.data.name);
+    }
+
     // Override!
     getId()   { return `?_${this.data.id}`; }
     getDate() { return {text: "Not Implemented", classList: []}; } // date - 2025-10-10 10:00:00
@@ -1297,7 +1301,7 @@ class MeshLogAdvertisement extends MeshLogReportedObject {
     getName() { return {text: this.data.name, classList: []}; }
     getText() { return {text: "", classList: []}; }
     getPathTag() { return "ADV"; }
-    isVisible() { return Settings.getBool('messageTypes.advertisements', true) && this.hasVisibleReports(); }
+    isVisible() { return Settings.getBool('messageTypes.advertisements', true) && this.hasVisibleReports() && this.isSenderVisible(); }
 }
 
 class MeshLogChannelMessage extends MeshLogReportedObject {
@@ -1318,7 +1322,7 @@ class MeshLogChannelMessage extends MeshLogReportedObject {
         let chid = this.data.channel_id;
         let ch = this._meshlog.channels[chid] ?? false;
         if (ch) ch = ch.isEnabled();
-        return Settings.getBool('messageTypes.channel', true) && ch && this.hasVisibleReports();
+        return Settings.getBool('messageTypes.channel', true) && ch && this.hasVisibleReports() && this.isSenderVisible();
     }
 }
 
@@ -1342,7 +1346,7 @@ class MeshLogDirectMessage extends MeshLogReportedObject {
     getName() { return {text: `${this.data.name}`, classList: ['t-bright'], background: str2color(this.data.name) }; }
     getText() { return {text: this.data.message, classList: ['t-white']}; }
     getPathTag() { return "DIR"; }
-    isVisible() { return Settings.getBool('messageTypes.direct', false) && this.hasVisibleReports(); }
+    isVisible() { return Settings.getBool('messageTypes.direct', false) && this.hasVisibleReports() && this.isSenderVisible(); }
 }
 
 class MeshLogLinkLayer {
@@ -1372,6 +1376,8 @@ class MeshLog {
         this.canvas_renderer = L.canvas({ padding: 0.5 });
         this.dom_logs = document.getElementById(logsid);
         this.dom_contacts = document.getElementById(contactsid);
+        this.dom_logs_filter_warning = document.getElementById("logs-filter-warning");
+        this.dom_contacts_filter_warning = document.getElementById("contacts-filter-warning");
         this.dom_warning = document.getElementById(warningid);
         this.dom_error = document.getElementById(errorid);
         this.dom_contextmenu = document.getElementById(contextmenuid);
@@ -1645,6 +1651,81 @@ class MeshLog {
         this.updatePaths();
     }
 
+    hasActiveReporterFilter() {
+        const totalReporters = Object.keys(this.reporters).length;
+        if (totalReporters < 1) return false;
+
+        const enabledReporters = Object.values(this.reporters)
+            .filter(reporter => reporter.isEnabled()).length;
+
+        return enabledReporters !== totalReporters;
+    }
+
+    hasActiveContactListFilter() {
+        if (!Settings.getBool('contactTypes.clients', true)) return true;
+        if (!Settings.getBool('contactTypes.repeaters', true)) return true;
+        if (!Settings.getBool('contactTypes.rooms', true)) return true;
+        if (!Settings.getBool('contactTypes.sensors', true)) return true;
+        if (Settings.get('contactFilter.value', '').trim().length > 0) return true;
+
+        return false;
+    }
+
+    hasActiveContactFilter() {
+        return this.hasActiveReporterFilter() || this.hasActiveContactListFilter();
+    }
+
+    hasActiveChannelFilter() {
+        const channels = Object.values(this.channels);
+        if (channels.length < 1) return false;
+        return channels.some(channel => !channel.isEnabled());
+    }
+
+    hasActiveMessageFilter() {
+        if (this.hasActiveReporterFilter()) return true;
+        if (this.hasActiveContactListFilter()) return true;
+
+        return false;
+    }
+
+    updateContactsFilterWarning() {
+        if (!this.dom_contacts_filter_warning) return;
+
+        const active = this.hasActiveContactFilter();
+        this.dom_contacts_filter_warning.hidden = !active;
+        this.dom_contacts_filter_warning.innerText = active ? "Filters active: some contacts are hidden." : "";
+    }
+
+    updateMessagesFilterWarning() {
+        if (!this.dom_logs_filter_warning) return;
+
+        const active = this.hasActiveMessageFilter();
+        this.dom_logs_filter_warning.hidden = !active;
+        this.dom_logs_filter_warning.innerText = active ? "Filters active: some messages are hidden." : "";
+    }
+
+    isContactVisible(contactId, senderName = "") {
+        const filter = Settings.get('contactFilter.value', '').trim().toLowerCase();
+        const sender = String(senderName ?? "").trim().toLowerCase();
+
+        if (contactId === undefined || contactId === null) {
+            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+                return sender.includes(filter);
+            }
+            return !this.hasActiveContactFilter();
+        }
+
+        const contact = this.contacts[contactId] ?? false;
+        if (!contact || !contact.dom?.container) {
+            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+                return sender.includes(filter);
+            }
+            return !this.hasActiveContactFilter();
+        }
+
+        return !contact.dom.container.hidden;
+    }
+
     sortContacts(fn=undefined, reverse=false) {
         if (!fn) {
             fn = this.order.fn;
@@ -1685,6 +1766,8 @@ class MeshLog {
             this.dom_contacts.appendChild(item)
         });
         this.fadeMarkers();
+        this.updateContactsFilterWarning();
+        this.updateMessagesDom();
     }
 
     __init_contact_order() {
@@ -2176,6 +2259,7 @@ class MeshLog {
             msg.createDom(false);
             msg.updateDom();
         }
+        this.updateMessagesFilterWarning();
     }
 
     onLoadMessages() {
@@ -2244,8 +2328,9 @@ class MeshLog {
 
             if (v.dom && v.dom.container) {
                 let hidden = v.dom.container.hidden;
+                let forcedVisible = this.visible_markers.has(v.data.id);
 
-                if (hidden) {
+                if (hidden && !forcedVisible) {
                     this.map.removeLayer(v.marker);
                 } else {
                     v.marker.addTo(this.map);

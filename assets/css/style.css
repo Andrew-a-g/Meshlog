@@ -247,6 +247,15 @@ h2 {
     padding: 8px;
 }
 
+.filter-warning {
+    margin: 8px 8px 0 8px;
+    padding: 6px 8px;
+    border: solid 1px #a88d2a;
+    border-radius: 4px;
+    background: rgba(171, 192, 35, 0.1);
+    color: #e2d27a;
+}
+
 #leftbar, #rightbar {
     background: #262626;
     height: 100vh;

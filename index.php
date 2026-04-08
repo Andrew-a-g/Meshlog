@@ -35,6 +35,7 @@
     </div>
     <div class="settings" id="settings-reporters">
     </div>
+    <div class="filter-warning" id="logs-filter-warning" hidden></div>
     <div id="logs"></div>
 </div>
 <div id="midbar">
@@ -48,6 +49,7 @@
     <div class="settings" id="settings-contacts">
     </div>
     <div class="settings" id="about">MeshLog Web</div>
+    <div class="filter-warning" id="contacts-filter-warning" hidden></div>
     <div id="contacts"></div>
 </div>
 
