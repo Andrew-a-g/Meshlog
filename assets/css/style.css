@@ -460,6 +460,38 @@ h2 {
     margin-bottom: 4px;
 }
 
+.detail-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.detail-qr {
+    display: inline-block;
+    padding: 8px;
+    border: solid 1px #444857;
+    border-radius: 6px;
+    background: #1f1f1f;
+    margin-bottom: 6px;
+}
+
+.detail-qr[hidden] {
+    display: none;
+}
+
+.detail-qr img,
+.detail-qr canvas {
+    display: block;
+    max-width: 192px;
+    height: auto;
+}
+
+.detail-qr-fallback {
+    max-width: 220px;
+    overflow-wrap: anywhere;
+}
+
 .marker-pin {
     width: 30px;
     height: 30px;

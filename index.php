@@ -19,6 +19,7 @@
         integrity="sha256-b6wRq6tXNDnatickDjAMTffu2ZO2lsaV5Aivm+oh2s4="
         crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <script src="assets/js/meshlog.js?v=<?=filemtime("assets/js/meshlog.js")?>"></script>
     <link rel="stylesheet" href="assets/css/style.css?v=<?=filemtime("assets/css/style.css")?>">
     <title>MeshLog</title>

@@ -446,6 +446,71 @@ class MeshLogContact extends MeshLogObject {
         this.neighbors_visible = false;
     }
 
+    getQrContents() {
+        const name = encodeURIComponent(this.adv?.data?.name ?? this.data.name ?? "");
+        const publicKey = encodeURIComponent(this.data.public_key ?? "");
+        const type = encodeURIComponent(this.adv?.data?.type ?? "");
+        return `meshcore://contact/add?name=${name}&public_key=${publicKey}&type=${type}`;
+    }
+
+    copyQrContents(button = null) {
+        const contents = this.getQrContents();
+        const resetLabel = button ? button.innerText : "";
+
+        const onSuccess = () => {
+            if (!button) return;
+            button.innerText = "Copied";
+            button.classList.add("active");
+            setTimeout(() => {
+                button.innerText = resetLabel;
+                button.classList.remove("active");
+            }, 1200);
+        };
+
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(contents)
+                .then(onSuccess)
+                .catch(() => {
+                    window.prompt("Copy link:", contents);
+                });
+            return;
+        }
+
+        window.prompt("Copy link:", contents);
+    }
+
+    ensureQrCode() {
+        if (!this.dom?.detailsQr) return;
+
+        const contents = this.getQrContents();
+        if (this.dom.detailsQr.dataset.contents === contents && this.dom.detailsQr.childNodes.length > 0) {
+            return;
+        }
+
+        while (this.dom.detailsQr.firstChild) {
+            this.dom.detailsQr.removeChild(this.dom.detailsQr.firstChild);
+        }
+
+        this.dom.detailsQr.dataset.contents = contents;
+
+        if (typeof QRCode === "undefined") {
+            let fallback = document.createElement("div");
+            fallback.classList.add("detail-qr-fallback");
+            fallback.innerText = contents;
+            this.dom.detailsQr.append(fallback);
+            return;
+        }
+
+        new QRCode(this.dom.detailsQr, {
+            text: contents,
+            width: 192,
+            height: 192,
+            colorDark: "#f5f5f5",
+            colorLight: "#262626",
+            correctLevel: QRCode.CorrectLevel.M
+        });
+    }
+
     createDom(recreate = false) {
         if (this.dom && !recreate) return this.dom;
 
@@ -486,21 +551,33 @@ class MeshLogContact extends MeshLogObject {
         let divDetailsFirst = document.createElement("div");
         let divDetailsKey = document.createElement("div");
         let divDetailsTelemetry = document.createElement("div");
+        let divDetailsActions = document.createElement("div");
+        let divDetailsQr = document.createElement("div");
         let btnShowNeighbors = document.createElement("button");
+        let btnShowQr = document.createElement("button");
+        let btnCopyQr = document.createElement("button");
 
         divDetails.append(divDetailsType);
         divDetails.append(divDetailsFirst);
         divDetails.append(divDetailsKey);
         divDetails.append(divDetailsTelemetry);
+        divDetails.append(divDetailsActions);
+        divDetails.append(divDetailsQr);
 
         if (!this.isClient()) {
-            divDetails.append(btnShowNeighbors);
+            divDetailsActions.append(btnShowNeighbors);
         }
+
+        divDetailsActions.append(btnShowQr);
+        divDetailsActions.append(btnCopyQr);
 
         divContainer.append(divContact);
         divContainer.append(divDetails);
 
         const self = this;
+        divDetailsActions.classList.add("detail-actions");
+        divDetailsQr.classList.add("detail-qr");
+        divDetailsQr.hidden = true;
         btnShowNeighbors.classList.add('btn');
         btnShowNeighbors.innerText = "Show Neighbors";
         btnShowNeighbors.onclick = (e) => {
@@ -519,6 +596,30 @@ class MeshLogContact extends MeshLogObject {
             }
         }
 
+        btnShowQr.classList.add('btn');
+        btnShowQr.innerText = "Show QR";
+        btnShowQr.onclick = (e) => {
+            const visible = !divDetailsQr.hidden;
+
+            if (visible) {
+                divDetailsQr.hidden = true;
+                e.target.innerText = "Show QR";
+                e.target.classList.remove("active");
+                return;
+            }
+
+            self.ensureQrCode();
+            divDetailsQr.hidden = false;
+            e.target.innerText = "Hide QR";
+            e.target.classList.add("active");
+        };
+
+        btnCopyQr.classList.add('btn');
+        btnCopyQr.innerText = "Copy Link";
+        btnCopyQr.onclick = () => {
+            self.copyQrContents(btnCopyQr);
+        };
+
         this.dom = {
             container: divContainer,
             contact: divContact,
@@ -535,7 +636,11 @@ class MeshLogContact extends MeshLogObject {
             detailsFirst: divDetailsFirst,
             detailsKey: divDetailsKey,
             detailsTelemetry: divDetailsTelemetry,
-            btnShowNeighbors: btnShowNeighbors
+            detailsActions: divDetailsActions,
+            detailsQr: divDetailsQr,
+            btnShowNeighbors: btnShowNeighbors,
+            btnShowQr: btnShowQr,
+            btnCopyQr: btnCopyQr
         };
 
         divContact.instance = this;
