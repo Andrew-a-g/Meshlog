@@ -294,7 +294,7 @@ class MeshLogContact extends MeshLogObject {
 
         let contactPairs = {
             pairs: {},
-            addPair: (src, dst) => {
+            addPair: (src, dst, options = {}) => {
                 if (!src || !dst) return;
                 if (!src.adv || !dst.adv) return;
                 if (src.adv.data.lat == 0 && src.adv.data.lon == 0) return;
@@ -306,9 +306,15 @@ class MeshLogContact extends MeshLogObject {
                         count: 1,
                         src,
                         dst,
+                        dashed: options.dashed === true,
+                        warnings: options.skipWarning ? [options.skipWarning] : [],
                     };
                 } else {
                     contactPairs.pairs[key].count += 1;
+                    contactPairs.pairs[key].dashed = contactPairs.pairs[key].dashed || options.dashed === true;
+                    if (options.skipWarning && !contactPairs.pairs[key].warnings.includes(options.skipWarning)) {
+                        contactPairs.pairs[key].warnings.push(options.skipWarning);
+                    }
                 }
             }
         };
@@ -339,8 +345,9 @@ class MeshLogContact extends MeshLogObject {
                     } else {
                         // to neareset contact
                         let nearest = this._meshlog.findNearestContact(this.data.lat, this.data.lon, hashes[0], true);
-                        if (nearest.result) {
-                            contactPairs.addPair(src, nearest.result);
+                        if (nearest && nearest.result) {
+                            const meta = this._meshlog.getPathResolutionMeta(src.data.public_key, hashes[0], nearest);
+                            contactPairs.addPair(src, nearest.result, meta);
                         }
                     }
                 } else {
@@ -428,11 +435,15 @@ class MeshLogContact extends MeshLogObject {
                                 };
                             }
                         },
-                        false
+                        false,
+                        {
+                            dashed: p.dashed,
+                            skipWarning: p.warnings[0] ?? null,
+                        }
                     )
                 ],
                 markers: markers ? new Set([p.src.data.id, p.dst.data.id]) : new Set([this.data.id]),
-                warnings: []
+                warnings: p.warnings ?? []
             }
         });
 
@@ -925,10 +936,26 @@ class MeshLogContact extends MeshLogObject {
 
         let sentAt = new Date(this.adv.data.sent_at).getTime();
         let createdAt = new Date(this.adv.data.created_at).getTime();
+        let prefixWarnings = [];
+
         if (Math.abs(sentAt - createdAt) > 1000 * 60 * 30) {
-            this.dom.contactPrefix.textContent = "⚠️";
+            prefixWarnings.push({
+                icon: "⚠️",
+                text: `Clock out of sync. Sender time: ${this.adv.data.sent_at}`
+            });
+        }
+
+        if (this.isRepeater() && !this.hasLocation()) {
+            prefixWarnings.push({
+                icon: "‼️",
+                text: "Repeater has no location."
+            });
+        }
+
+        if (prefixWarnings.length > 0) {
+            this.dom.contactPrefix.textContent = prefixWarnings.map(w => w.icon).join("");
             this.dom.contactPrefix.classList.add('warn-icon')
-            createTooltip(this.dom.contactPrefix, `Clock out of sync. Sender time: ${this.adv.data.sent_at}`);
+            createTooltip(this.dom.contactPrefix, prefixWarnings.map(w => w.text).join(" | "));
         } else {
             this.dom.contactPrefix.innerHTML = "";
             this.dom.contactPrefix.classList.remove('warn-icon');
@@ -1044,6 +1071,11 @@ class MeshLogContact extends MeshLogObject {
     update() {
         this.updateDom();
         this.updateMarker();
+    }
+
+    hasLocation() {
+        if (!this.adv) return false;
+        return !(Number(this.adv.data.lat) === 0 && Number(this.adv.data.lon) === 0);
     }
 
     isClient() {
@@ -1257,7 +1289,7 @@ class MeshLogReportedObject extends MeshLogObject {
     }
 
     isSenderVisible() {
-        return this._meshlog.isContactVisible(this.data.contact_id, this.data.name);
+        return this._meshlog.isMessageSenderVisible(this.data.contact_id, this.data.name);
     }
 
     // Override!
@@ -1493,11 +1525,12 @@ class MeshLogDirectMessage extends MeshLogReportedObject {
 }
 
 class MeshLogLinkLayer {
-    constructor(from, to, reporter, circle) {
+    constructor(from, to, reporter, circle, dashed = false) {
         this.from = from;
         this.to = to;
         this.reporter = reporter;
         this.circle = circle;
+        this.dashed = dashed;
     }
 }
 
@@ -2021,6 +2054,53 @@ class MeshLog {
         return !contact.dom.container.hidden;
     }
 
+    isMessageSenderVisible(contactId, senderName = "") {
+        const filter = Settings.get('contactFilter.value', '').trim().toLowerCase();
+        const sender = String(senderName ?? "").trim().toLowerCase();
+
+        if (contactId === undefined || contactId === null) {
+            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+                return sender.includes(filter);
+            }
+            return !this.hasActiveContactListFilter();
+        }
+
+        const contact = this.contacts[contactId] ?? false;
+        if (!contact) {
+            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+                return sender.includes(filter);
+            }
+            return !this.hasActiveContactListFilter();
+        }
+
+        let hidden = false;
+        let type = parseInt(contact.adv?.data?.type ?? contact.dom?.container?.dataset.type ?? 0, 10);
+
+        if (type == 1 && !Settings.getBool('contactTypes.clients', true)) { hidden = true; }
+        else if (type == 2 && !Settings.getBool('contactTypes.repeaters', true)) { hidden = true; }
+        else if (type == 3 && !Settings.getBool('contactTypes.rooms', true)) { hidden = true; }
+        else if (type == 4 && !Settings.getBool('contactTypes.sensors', true)) { hidden = true; }
+
+        if (!hidden && filter) {
+            const name = String(contact.dom?.container?.dataset.name ?? contact.adv?.data?.name ?? senderName ?? "").toLowerCase();
+            const hash = String(contact.dom?.container?.dataset.hash ?? contact.hash ?? "").toLowerCase();
+            const pubkey = String(contact.data.public_key ?? "").toLowerCase();
+
+            let cmpName = name.includes(filter);
+            let cmpHash = hash.startsWith(filter);
+            let cmpPubkey = pubkey.startsWith(filter);
+            hidden = !cmpName && !cmpHash && !cmpPubkey;
+
+            if (filter == '{multibyte}') {
+                hidden = String(contact.data.multibyte ?? '0') == '0';
+            } else if (filter == '{singlebyte}') {
+                hidden = String(contact.data.multibyte ?? '0') == '1';
+            }
+        }
+
+        return !hidden;
+    }
+
     sortContacts(fn=undefined, reverse=false) {
         if (!fn) {
             fn = this.order.fn;
@@ -2043,9 +2123,10 @@ class MeshLog {
             if (!hidden) {
                 let filter = Settings.get('contactFilter.value', '').trim().toLowerCase();
                 if (filter) {
-                    let cmp1 = item.dataset.name.toLowerCase().includes(filter);
-                    let cmp2 = item.dataset.pubkey.toLowerCase().includes(filter);
-                    hidden = !cmp1 && !cmp2;
+                    let cmpName = item.dataset.name.toLowerCase().includes(filter);
+                    let cmpHash = item.dataset.hash.toLowerCase().startsWith(filter);
+                    let cmpPubkey = item.dataset.pubkey.toLowerCase().startsWith(filter);
+                    hidden = !cmpName && !cmpHash && !cmpPubkey;
 
                     // special selector
                     if (filter == '{multibyte}') {
@@ -2696,6 +2777,7 @@ class MeshLog {
                 if (current[0] == 0 && current[1] == 0) return;
 
                 matches++;
+
                 const dist = haversineDistance(lat, lon, current[0], current[1]);
 
                 if (!match || dist < matchDist) {
@@ -2750,14 +2832,15 @@ class MeshLog {
                 let line_id = [path.from.contact_id, path.to.contact_id].sort((a, b) => a - b).join('_');
                 let decor_id = `${path.reporter.data.id}`;
                 let circle_id = `${path.to.contact_id}`;
+                let dashArray = path.dashed ? '6 8' : null;
 
                 let linePath = [
                     [path.to.lat, path.to.lon],
                     [path.from.lat, path.from.lon]
                 ];
 
-                let line1 = L.polyline(linePath, {renderer: this.canvas_renderer, color: linkStrokeColor, weight: ln_outline});
-                let line2 = L.polyline(linePath, {renderer: this.canvas_renderer, color: linkColor, weight: ln_weight});
+                let line1 = L.polyline(linePath, {renderer: this.canvas_renderer, color: linkStrokeColor, weight: ln_outline, dashArray});
+                let line2 = L.polyline(linePath, {renderer: this.canvas_renderer, color: linkColor, weight: ln_weight, dashArray});
 
                 if (!links.includes(line_id)) {
                     links.push(line_id);
@@ -2922,7 +3005,7 @@ class MeshLog {
                     contact_id: nearest.result.data.id
                 };
                 desc.markers.add(nearest.result.data.id);
-                desc.paths.push(new MeshLogLinkLayer(prev, current, reporter, addCircle && i == 0));
+                desc.paths.push(new MeshLogLinkLayer(prev, current, reporter, addCircle && i == 0, nearest.matches > 1));
                 prev = current;
             } else {
                 console.log('no nearest: ');
@@ -3031,13 +3114,21 @@ function str2color(str, saturation = 65, lightness = 45) {
 }
 
 function createTooltip(element, contents) {
-    let tooltip = document.createElement("div");
+    let tooltip = element.querySelector('.warn-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.classList.add('warn-tooltip');
+        element.append(tooltip);
+    }
+
     tooltip.textContent = contents;
-    tooltip.classList.add('warn-tooltip');
 
-    element.append(tooltip);
+    if (element.dataset.tooltipBound === "1") {
+        return;
+    }
 
-    element.addEventListener("mouseenter", (e) => {
+    element.dataset.tooltipBound = "1";
+    element.addEventListener("mouseenter", () => {
         const rect = element.getBoundingClientRect();
         tooltip.style.display = "block";
         tooltip.style.left = (rect.right + window.scrollX + 8) + "px";
