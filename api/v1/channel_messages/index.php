@@ -1,4 +1,5 @@
 <?php
+$start = microtime(true);
 require_once "../../../lib/meshlog.class.php";
 require_once "../../../config.php";
 include "../utils.php";
@@ -21,6 +22,8 @@ if ($err) {
     $results = $meshlog->getChannelMessagesQuick($params);
     limitObjectReportsPerReporter($results['objects'], $reportLimit);
 }
+$results['time'] = microtime(true) - $start;
+
 header('Content-Type: application/json; charset=utf-8');
 echo json_encode($results);
 
