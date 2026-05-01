@@ -12,6 +12,7 @@
     include 'migrations/007_add_hash_size.php';
     include 'migrations/008_add_multibyte_flag.php';
     include 'migrations/009_add_channel_secret.php';
+    include 'migrations/010_add_contacts_quick_indexes.php';
 
     // Must be in order!
     $migrationClasses = array(
@@ -25,6 +26,7 @@
         'Migration_007',
         'Migration_008',
         'Migration_009',
+        'Migration_010',
     );
 
     session_start();

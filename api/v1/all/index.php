@@ -99,6 +99,10 @@ function limitGetAllReports(&$results, $maxReports) {
     }
 }
 
+function emptyObjects() {
+    return array('objects' => array());
+}
+
 $meshlog = new MeshLog($config['db']);
 $err = $meshlog->getError();
 $reportLimit = getReportLimitParam(1);
@@ -106,26 +110,59 @@ $reportLimit = getReportLimitParam(1);
 if ($err) {
     $results = array('error' => $err);
 } else {
+    $messagesCount = getParam('messages_count', getParam('count', DEFAULT_COUNT));
+    $contactsCount = getParam('contacts_count', DEFAULT_CONTACTS_COUNT);
+    $includeMeta = getParam('include_meta', 1);
+
     $params = array(
         'offset' => getParam('offset', 0),
-        'count' => getParam('count', DEFAULT_COUNT),
+        'count' => $messagesCount,
         'after_ms' => getParam('after_ms', 0),
         'before_ms' => getParam('before_ms', 0),
     );
 
     $paramsContacts = array(
         'offset' => getParam('offset', 0),
-        'count' => getParam('count', DEFAULT_CONTACTS_COUNT),
+        'count' => $contactsCount,
         'after_ms' => getParam('after_ms', 0),
         'before_ms' => getParam('before_ms', 0),
     );
 
-    $reporters = $meshlog->getReporters($params);
-    $contacts = $meshlog->getContactsQuick($paramsContacts);
-    $advertisements = $meshlog->getAdvertisementsQuick($params);
-    $channels = $meshlog->getChannels($params);
-    $direct_messages = $meshlog->getDirectMessagesQuick($params);
-    $channel_messages = $meshlog->getChannelMessagesQuick($params);
+    $reporters = array('objects' => array());
+    $contacts = array('objects' => array());
+    $channels = array('objects' => array());
+
+    if ((int) $includeMeta !== 0) {
+        $reporters = $meshlog->getReporters($params);
+        if ((int) $contactsCount > 0) {
+            $contacts = $meshlog->getContactsQuick($paramsContacts);
+        }
+        $channels = $meshlog->getChannels($params);
+    }
+
+    $messageIds = $meshlog->getRecentMessageIds($params);
+
+    $advertisementParams = $params;
+    $advertisementParams['ids'] = $messageIds['advertisements'];
+    $advertisementParams['count'] = count($messageIds['advertisements']);
+
+    $directMessageParams = $params;
+    $directMessageParams['ids'] = $messageIds['direct_messages'];
+    $directMessageParams['count'] = count($messageIds['direct_messages']);
+
+    $channelMessageParams = $params;
+    $channelMessageParams['ids'] = $messageIds['channel_messages'];
+    $channelMessageParams['count'] = count($messageIds['channel_messages']);
+
+    $advertisements = count($messageIds['advertisements'])
+        ? $meshlog->getAdvertisementsQuick($advertisementParams)
+        : emptyObjects();
+    $direct_messages = count($messageIds['direct_messages'])
+        ? $meshlog->getDirectMessagesQuick($directMessageParams)
+        : emptyObjects();
+    $channel_messages = count($messageIds['channel_messages'])
+        ? $meshlog->getChannelMessagesQuick($channelMessageParams)
+        : emptyObjects();
 
     $results = array(
         'reporters' => $reporters,
@@ -136,7 +173,6 @@ if ($err) {
         'channel_messages' => $channel_messages
     );
 
-    limitContactAdvertisementReportsPerReporter($results['contacts']['objects'], $reportLimit);
     limitObjectReportsPerReporter($results['advertisements']['objects'], $reportLimit);
     limitObjectReportsPerReporter($results['direct_messages']['objects'], $reportLimit);
     limitObjectReportsPerReporter($results['channel_messages']['objects'], $reportLimit);

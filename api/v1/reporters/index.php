@@ -10,7 +10,12 @@ $err = $meshlog->getError();
 if ($err) {
     $results = array('error' => $err);  
 } else {
-    $results = $meshlog->getReporters(array('offset' => 0, 'count' => DEFAULT_COUNT));
+    $results = $meshlog->getReporters(array(
+        'offset' => getParam('offset', 0),
+        'count' => getParam('count', DEFAULT_COUNT),
+        'after_ms' => getParam('after_ms', 0),
+        'before_ms' => getParam('before_ms', 0),
+    ));
 }
 
 $results['time'] = microtime(true) - $start;

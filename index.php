@@ -370,7 +370,7 @@ var meshlog = new MeshLog(
     "context-menu",
 );
 meshlog.loadAll();
-meshlog.setAutorefresh(10000);
+meshlog.applyAutorefreshSetting();
 
 </script>
 </body>

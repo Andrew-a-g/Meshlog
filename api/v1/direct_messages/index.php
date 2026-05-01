@@ -12,9 +12,9 @@ if ($err) {
     $results = array('error' => $err);  
 } else {
     $results = $meshlog->getDirectMessagesQuick(array(
-        'offset' => 0, 
-        'count' => DEFAULT_COUNT,
-        'advertisements' => TRUE,
+        'offset' => getParam('offset', 0),
+        'count' => getParam('count', DEFAULT_COUNT),
+        'ids' => getParam('ids', array()),
         'after_ms' => getParam('after_ms', 0),
         'before_ms' => getParam('before_ms', 0)
     ));

@@ -18,6 +18,38 @@ class Settings {
     }
 }
 
+function getClockOutOfSyncWarning(senderTimeText, sentAt, createdAt) {
+    const threshold = 1000 * 60 * 30;
+    if (!Number.isFinite(sentAt) || !Number.isFinite(createdAt)) return null;
+
+    if (createdAt - sentAt > threshold) {
+        return {
+            icon: "⚠️⏪",
+            text: `Clock out of sync. Sender time is behind: ${senderTimeText}`,
+        };
+    }
+
+    if (sentAt - createdAt > threshold) {
+        return {
+            icon: "⚠️⏩",
+            text: `Clock out of sync. Sender time is ahead: ${senderTimeText}`,
+        };
+    }
+
+    return null;
+}
+
+function formatAdvertInterval(totalSeconds) {
+    const seconds = Number(totalSeconds);
+    if (!Number.isFinite(seconds) || seconds < 0) return "";
+
+    const totalMinutes = Math.round(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
 class MeshLogObject {
     static idPrefix = "";
 
@@ -538,33 +570,44 @@ class MeshLogContact extends MeshLogObject {
         let divContainer = document.createElement("div");
         let divContact = document.createElement("div");
         let divDetails = document.createElement("div");
+        let divLine1 = document.createElement("div");
+        let divLine2 = document.createElement("div");
 
-        divContact.classList.add("log-entry");
+        divContact.classList.add("log-entry", "contact-row");
         divContact.instance = this;
         divDetails.hidden = true;
+        divLine1.classList.add("log-entry-info", "contact-row-top");
+        divLine2.classList.add("log-entry-msg", "contact-row-bottom");
 
         let imType = document.createElement("img");
         let spDate = document.createElement("span");
         let spPrefix = document.createElement("span");
         let spHash = document.createElement("span");
         let spName = document.createElement("span");
+        let spMeta = document.createElement("span");
         let spTelemetry = document.createElement("span");
 
         imType.classList.add(...['ti']);
         spDate.classList.add(...['sp', 'c']);
         spHash.classList.add(...['sp', 'prio-4']);
-        spName.classList.add(...['sp', 't']);
-        spTelemetry.classList.add(...['sp', 'sm']);
+        spName.classList.add(...['sp', 't', 'contact-name']);
+        spPrefix.classList.add(...['contact-inline-warning']);
+        spMeta.classList.add(...['sp', 'sm', 'contact-inline-meta']);
+        spTelemetry.classList.add(...['contact-inline-text']);
 
-        divContact.append(spDate);
-        divContact.append(imType);
-        divContact.append(spHash);
-        divContact.append(spName);
-        divContact.append(spPrefix);
-        divContact.append(spTelemetry);
+        divLine1.append(spDate);
+        spMeta.append(spPrefix);
+        spMeta.append(spTelemetry);
+        divLine1.append(spMeta);
+        divLine2.append(imType);
+        divLine2.append(spHash);
+        divLine2.append(spName);
+        divContact.append(divLine1);
+        divContact.append(divLine2);
 
         let divDetailsType = document.createElement("div");
         let divDetailsFirst = document.createElement("div");
+        let divDetailsInterval = document.createElement("div");
         let divDetailsKey = document.createElement("div");
         let divDetailsTelemetry = document.createElement("div");
         let divDetailsActions = document.createElement("div");
@@ -575,6 +618,7 @@ class MeshLogContact extends MeshLogObject {
 
         divDetails.append(divDetailsType);
         divDetails.append(divDetailsFirst);
+        divDetails.append(divDetailsInterval);
         divDetails.append(divDetailsKey);
         divDetails.append(divDetailsTelemetry);
         divDetails.append(divDetailsActions);
@@ -644,12 +688,14 @@ class MeshLogContact extends MeshLogObject {
             contactDate: spDate,
             contactHash: spHash,
             contactName: spName,
+            contactMeta: spMeta,
             contactPrefix: spPrefix,
             contactIcon: imType,
             contactTelemetry: spTelemetry,
 
             detailsType: divDetailsType,
             detailsFirst: divDetailsFirst,
+            detailsInterval: divDetailsInterval,
             detailsKey: divDetailsKey,
             detailsTelemetry: divDetailsTelemetry,
             detailsActions: divDetailsActions,
@@ -863,7 +909,12 @@ class MeshLogContact extends MeshLogObject {
         if (!this.marker) return;
 
         if (tooltip === undefined) {
-            tooltip = `<p class="tooltip-title">${this.adv.data.name} <span class="tooltip-hash">[${this.hash}]</span></p><p class="tooltip-detail">Last heard: ${this.last.data.created_at}</p>`;
+            const advertInterval = this.getAdvertisementIntervalSeconds();
+            const advertIntervalLine =
+                advertInterval !== null && Number.isFinite(advertInterval)
+                    ? `<p class="tooltip-detail">Advert interval: ${formatAdvertInterval(advertInterval)}</p>`
+                    : '';
+            tooltip = `<p class="tooltip-title">${this.adv.data.name} <span class="tooltip-hash">[${this.hash}]</span></p><p class="tooltip-detail">Last heard: ${this.last.data.created_at}</p>${advertIntervalLine}`;
         }
 
         this.marker_tooltip = tooltip;
@@ -899,6 +950,44 @@ class MeshLogContact extends MeshLogObject {
             );
     }
 
+    getClockWarning() {
+        if (!this.adv) return null;
+
+        let sentAt = new Date(this.adv.data.sent_at).getTime();
+        let createdAt = new Date(this.adv.data.created_at).getTime();
+        return getClockOutOfSyncWarning(this.adv.data.sent_at, sentAt, createdAt);
+    }
+
+    hasClockWarning() {
+        return this.getClockWarning() !== null;
+    }
+
+    getAdvertisementIntervalSeconds() {
+        if (this.isExpired() || this.isVeryExpired()) return null;
+
+        const intervalSeconds = this.adv?.data?.interval_seconds ?? null;
+        if (intervalSeconds === null || intervalSeconds === undefined) return null;
+        return Number(intervalSeconds);
+    }
+
+    getInlineAdvertisementIntervalText() {
+        const intervalSeconds = this.getAdvertisementIntervalSeconds();
+        if (intervalSeconds === null || !Number.isFinite(intervalSeconds)) return '';
+
+        let roundedMinutes = Math.round(intervalSeconds / 60);
+        if (roundedMinutes >= 60 * 3) {
+            roundedMinutes = Math.ceil(roundedMinutes / 10) * 10;
+        }
+        const intervalText = formatAdvertInterval(intervalSeconds);
+        if (roundedMinutes < 60 * 12) {
+            return `<small class="contact-interval-text contact-interval-critical">${intervalText}</small>`;
+        }
+        if (roundedMinutes < 60 * 24) {
+            return `<small class="contact-interval-text contact-interval-warning">${intervalText}</small>`;
+        }
+        return `<small class="contact-interval-text">${intervalText}</small>`;
+    }
+
     updateDom() {
         if (!this.dom) return;
         if (!this.adv) return;
@@ -912,7 +1001,13 @@ class MeshLogContact extends MeshLogObject {
         this.dom.container.dataset.hash = hashstr;
         this.dom.container.dataset.pubkey = this.data.public_key;
         this.dom.container.dataset.multibyte = this.data.multibyte;
+        this.dom.container.dataset.clock = this.hasClockWarning() ? 'bad' : 'ok';
         this.dom.container.dataset.first_seen = new Date(this.data.created_at).getTime();
+        const advertIntervalSeconds = this.getAdvertisementIntervalSeconds();
+        this.dom.container.dataset.advert_interval =
+            advertIntervalSeconds !== null && Number.isFinite(advertIntervalSeconds)
+                ? advertIntervalSeconds
+                : '';
 
         this.dom.details.hidden = !this.expanded;
 
@@ -934,18 +1029,14 @@ class MeshLogContact extends MeshLogObject {
             this.dom.contactHash.classList.remove("prio-5");
         }
 
-        let sentAt = new Date(this.adv.data.sent_at).getTime();
-        let createdAt = new Date(this.adv.data.created_at).getTime();
         let prefixWarnings = [];
+        let clockWarning = this.getClockWarning();
 
-        if (Math.abs(sentAt - createdAt) > 1000 * 60 * 30) {
-            prefixWarnings.push({
-                icon: "⚠️",
-                text: `Clock out of sync. Sender time: ${this.adv.data.sent_at}`
-            });
+        if (clockWarning && this._meshlog.shouldShowContactTimeWarnings()) {
+            prefixWarnings.push(clockWarning);
         }
 
-        if (this.isRepeater() && !this.hasLocation()) {
+        if (this.isRepeater() && !this.hasLocation() && this._meshlog.shouldShowContactLocationWarnings()) {
             prefixWarnings.push({
                 icon: "‼️",
                 text: "Repeater has no location."
@@ -984,13 +1075,20 @@ class MeshLogContact extends MeshLogObject {
 
         this.dom.detailsType.innerHTML = `<span class="detail-name">Type:</span> <span class="detail-value">${type}</span>`;
         this.dom.detailsFirst.innerHTML = `<span class="detail-name">First Seen:</span> <span class="detail-value">${this.data.created_at}</span>`;
+        const advertInterval = this.getAdvertisementIntervalSeconds();
+        if (advertInterval !== null && Number.isFinite(advertInterval)) {
+            this.dom.detailsInterval.innerHTML = `<span class="detail-name">Advert Interval:</span> <span class="detail-value">${formatAdvertInterval(advertInterval)}</span>`;
+        } else {
+            this.dom.detailsInterval.innerHTML = '';
+        }
         this.dom.detailsKey.innerHTML = `<span class="detail-name">Public Key:</span> <span class="detail-value">${this.data.public_key}</span>`;
 
         this.dom.contactName.innerText = this.adv.data.name;
         this.dom.contactDate.innerText = this.last.data.created_at;
         this.dom.contactHash.innerText = `[${hashstr}]`;
 
-        if (this.telemetry) {
+        let inlineMeta = [];
+        if (this.telemetry && this._meshlog.shouldShowContactTelemetry()) {
             let channels = {};
             for (let i=0;i<this.telemetry.length;i++) {
                 const sensor = this.telemetry[i];
@@ -1043,12 +1141,28 @@ class MeshLogContact extends MeshLogObject {
 
             if (result.length > 0) {
                 this.dom.detailsTelemetry.innerHTML = `<span class="detail-name">Telemetry:</span> <span class="detail-value">${result}</span>`;
-                this.dom.contactTelemetry.innerHTML = short;
+                if (short) {
+                    inlineMeta.push(short);
+                }
 
             } else {
                 this.dom.detailsTelemetry.innerHTML = '';
-                this.dom.contactTelemetry.innerHTML = '';
             }
+        } else {
+            this.dom.detailsTelemetry.innerHTML = '';
+        }
+
+        if (this._meshlog.shouldShowContactAdvertIntervalInline()) {
+            const intervalText = this.getInlineAdvertisementIntervalText();
+            if (intervalText) {
+                inlineMeta.push(intervalText);
+            }
+        }
+
+        this.dom.contactTelemetry.innerHTML = inlineMeta.join(' | ');
+
+        if (this.marker) {
+            this.updateTooltip();
         }
 
         if (this.highlight) {
@@ -1265,18 +1379,31 @@ class MeshLogReport {
 
 class MeshLogReportedObject extends MeshLogObject {
     constructor(meshlog, data) {
-        let reports = data.reports ?? [];
-        delete data.reports;
+        const objectData = { ...data };
+        const reports = Array.isArray(objectData.reports) ? objectData.reports : [];
+        delete objectData.reports;
 
-        super(meshlog, data);
+        super(meshlog, objectData);
         this.dom = null;
         this.expanded = false;
-        this.time = new Date(data.created_at).getTime();
+        this.time = new Date(objectData.created_at).getTime();
         this.reports = [];
 
         for (let i=0; i<reports.length; i++) {
             let report = reports[i];
-            this.reports.push(new MeshLogReport(meshlog, report, data.contact_id, this));
+            this.reports.push(new MeshLogReport(meshlog, report, objectData.contact_id, this));
+        }
+    }
+
+    merge(data) {
+        const objectData = { ...data };
+        const reports = Array.isArray(objectData.reports) ? objectData.reports : null;
+        delete objectData.reports;
+
+        super.merge(objectData);
+
+        if (reports !== null) {
+            this.reports = reports.map(report => new MeshLogReport(this._meshlog, report, objectData.contact_id, this));
         }
     }
 
@@ -1339,6 +1466,7 @@ class MeshLogReportedObject extends MeshLogObject {
         let spPrefix = document.createElement("span");
         let spName = document.createElement("span");
         let spText = document.createElement("span");
+        let spRight = document.createElement("span");
 
         let date = this.getDate();
         let tag = this.getTag();
@@ -1356,10 +1484,11 @@ class MeshLogReportedObject extends MeshLogObject {
         // Check message times
         let sentAt = new Date(this.data.sent_at).getTime();
         let createdAt = new Date(this.data.created_at).getTime();
-        if (Math.abs(sentAt - createdAt) > 1000 * 60 * 30) {
-            spPrefix.textContent = "⚠️";
+        let clockWarning = getClockOutOfSyncWarning(this.data.sent_at, sentAt, createdAt);
+        if (clockWarning) {
+            spPrefix.textContent = clockWarning.icon;
             spPrefix.classList.add('warn-icon')
-            createTooltip(spPrefix, `Clock out of sync. Sender time: ${this.data.sent_at}`);
+            createTooltip(spPrefix, clockWarning.text);
         }
 
         spName.classList.add(...['sp', 't']);
@@ -1370,6 +1499,7 @@ class MeshLogReportedObject extends MeshLogObject {
         spText.classList.add(...['sp']);
         spText.classList.add(...text.classList);
         spText.innerHTML = text.text.linkify();
+        spRight.classList.add('message-inline-meta');
 
         if (this.data.hash_size > 1) {
             spName.classList.add('t-mb');
@@ -1379,14 +1509,12 @@ class MeshLogReportedObject extends MeshLogObject {
         if (text.text) {
             // message
             divLine1.append(spDate);
-            divLine1.append(spPrefix);
             divLine1.append(spTag);
             divLine2.append(spName);
             divLine2.append(spText);
         } else {
             // advert
             divLine1.append(spDate);
-            divLine1.append(spPrefix);
             // divLine1.append(spTag);
             divLine1.append(spName);
         }
@@ -1395,7 +1523,9 @@ class MeshLogReportedObject extends MeshLogObject {
         let inputShow = document.createElement("input");
         inputShow.type = "checkbox";
         inputShow.classList.add(...['log-entry-cehckbox']);
-        divLine1.appendChild(inputShow);
+        spRight.appendChild(spPrefix);
+        spRight.appendChild(inputShow);
+        divLine1.appendChild(spRight);
 
         inputShow.onclick = (e) => {
             e.stopPropagation();
@@ -1558,11 +1688,28 @@ class MeshLog {
         this.dom_error = document.getElementById(errorid);
         this.dom_contextmenu = document.getElementById(contextmenuid);
         this.timer = false;
-        this.autorefresh = 0;
+        this.interval = 0;
         this.decor = true;
+        this.default_api_count = 500;
+        this.default_contacts_count = 2000;
+        this.initial_messages_count = 250;
+        this.older_messages_page_size = 200;
+        this.loading_old = false;
+        this.has_more_old = true;
 
-        // epoch of newest object
+        // epochs of newest loaded data
         this.latest = 0;
+        this.latest_meta = 0;
+        this.message_type_loaded = {
+            advertisements: false,
+            channel_messages: false,
+            direct_messages: false,
+        };
+        this.message_type_loading = {
+            advertisements: false,
+            channel_messages: false,
+            direct_messages: false,
+        };
         this.window_active = true;
         this.new_messages = {};
 
@@ -1593,6 +1740,7 @@ class MeshLog {
         this.dom_logs.addEventListener('mouseover', this.handleMouseEvent);
         this.dom_logs.addEventListener('mouseout', this.handleMouseEvent);
         this.dom_logs.addEventListener("contextmenu", this.handleMouseEvent);
+        this.dom_logs.addEventListener('scroll', () => this.onLogsScroll());
 
         this.dom_warning.dataset.compact = "1";
 
@@ -1604,6 +1752,7 @@ class MeshLog {
         this.__init_message_types();
         this.__init_reporter_filter();
         this.__init_filter_warnings();
+        this.__init_contact_settings();
         this.__init_contact_order();
         this.__init_contact_types();
         this.__init_warnings();
@@ -1709,8 +1858,188 @@ class MeshLog {
         return div;
     }
 
+    __createNumberInput(label, key, def, onchange, options = {}) {
+        let div = document.createElement("div");
+        let lbl = document.createElement("span");
+        let inp = document.createElement("input");
+
+        lbl.classList.add("reporter-filter-limit-label");
+        lbl.innerText = label;
+
+        inp.type = "number";
+        inp.dataset.settingKey = key;
+        inp.value = Settings.get(key, def);
+        if (options.min !== undefined) {
+            inp.min = String(options.min);
+        }
+        if (options.step !== undefined) {
+            inp.step = String(options.step);
+        }
+        if (options.placeholder) {
+            inp.placeholder = options.placeholder;
+        }
+        inp.onchange = (e) => {
+            Settings.set(key, e.target.value);
+            onchange(e);
+        };
+
+        div.classList.add("reporter-filter-limit");
+        div.appendChild(lbl);
+        div.appendChild(inp);
+
+        return div;
+    }
+
+    getContactSpecialFilterOptions() {
+        return [
+            { value: '{multibyte}', label: 'Multibyte Contacts' },
+            { value: '{singlebyte}', label: 'Single-byte Contacts' },
+            { value: '{clockbad}', label: 'Clock Out Of Sync' },
+            { value: '{clockok}', label: 'Clock In Sync' },
+        ];
+    }
+
+    isSpecialContactFilter(filter) {
+        return this.getContactSpecialFilterOptions().some(option => option.value === filter);
+    }
+
+    matchesContactSpecialFilter(contact, filter) {
+        if (!contact) return false;
+
+        switch (filter) {
+            case '{multibyte}':
+                return String(contact.data.multibyte ?? '0') === '1';
+            case '{singlebyte}':
+                return String(contact.data.multibyte ?? '0') !== '1';
+            case '{clockbad}':
+                return contact.hasClockWarning && contact.hasClockWarning();
+            case '{clockok}':
+                return !(contact.hasClockWarning && contact.hasClockWarning());
+            default:
+                return false;
+        }
+    }
+
+    __createContactFilterInput(onchange) {
+        let div = document.createElement("div");
+        let inp = document.createElement("input");
+        let select = document.createElement("select");
+        const key = 'contactFilter.value';
+
+        const syncSelect = () => {
+            const filter = String(inp.value ?? '').trim().toLowerCase();
+            select.value = this.isSpecialContactFilter(filter) ? filter : '';
+        };
+
+        inp.type = "text";
+        inp.dataset.settingKey = key;
+        inp.value = Settings.get(key, '');
+        inp.placeholder = "Filter by Name or Hash/Key";
+        inp.oninput = (e) => {
+            Settings.set(key, e.target.value);
+            syncSelect();
+            onchange(e);
+        };
+
+        select.dataset.settingKey = key;
+        select.classList.add("settings-input-select");
+
+        let placeholder = document.createElement("option");
+        placeholder.value = '';
+        placeholder.innerText = "User Query";
+        select.appendChild(placeholder);
+
+        for (const option of this.getContactSpecialFilterOptions()) {
+            let node = document.createElement("option");
+            node.value = option.value;
+            node.innerText = option.label;
+            select.appendChild(node);
+        }
+
+        select.onchange = (e) => {
+            inp.readOnly = e.target.value ? true : false;
+
+            inp.value = e.target.value;
+            Settings.set(key, inp.value);
+            syncSelect();
+            onchange({ target: inp });
+        };
+
+        div.classList.add("settings-input", "settings-input-with-select");
+        div.appendChild(inp);
+        div.appendChild(select);
+
+        syncSelect();
+        return div;
+    }
+
     getReportLimitSettingKey() {
         return 'reporters.reportLimit';
+    }
+
+    getAutorefreshSettingKey() {
+        return 'messages.autorefreshSeconds';
+    }
+
+    getAutorefreshMinimumSeconds() {
+        return 3;
+    }
+
+    getAutorefreshSetting() {
+        const raw = Settings.get(this.getAutorefreshSettingKey(), 10);
+        const parsed = parseInt(String(raw ?? '').trim(), 10);
+        if (!Number.isFinite(parsed)) {
+            return 10;
+        }
+
+        return Math.max(this.getAutorefreshMinimumSeconds(), parsed);
+    }
+
+    setAutorefreshSetting(value) {
+        const parsed = parseInt(String(value ?? '').trim(), 10);
+        const normalized = Number.isFinite(parsed)
+            ? Math.max(this.getAutorefreshMinimumSeconds(), parsed)
+            : 10;
+        Settings.set(this.getAutorefreshSettingKey(), normalized);
+        return normalized;
+    }
+
+    applyAutorefreshSetting() {
+        const seconds = this.setAutorefreshSetting(this.getAutorefreshSetting());
+        this.setAutorefresh(seconds * 1000);
+        return seconds;
+    }
+
+    getContactTimeWarningsSettingKey() {
+        return 'contacts.showTimeWarnings';
+    }
+
+    getContactLocationWarningsSettingKey() {
+        return 'contacts.showLocationWarnings';
+    }
+
+    getContactAdvertIntervalInlineSettingKey() {
+        return 'contacts.showAdvertIntervalInline';
+    }
+
+    getContactTelemetrySettingKey() {
+        return 'contacts.showTelemetry';
+    }
+
+    shouldShowContactTimeWarnings() {
+        return Settings.getBool(this.getContactTimeWarningsSettingKey(), true);
+    }
+
+    shouldShowContactLocationWarnings() {
+        return Settings.getBool(this.getContactLocationWarningsSettingKey(), true);
+    }
+
+    shouldShowContactAdvertIntervalInline() {
+        return Settings.getBool(this.getContactAdvertIntervalInlineSettingKey(), true);
+    }
+
+    shouldShowContactTelemetry() {
+        return Settings.getBool(this.getContactTelemetrySettingKey(), false);
     }
 
     getReportLimitSetting() {
@@ -1793,18 +2122,95 @@ class MeshLog {
         this.updateReporterFilterDom();
     }
 
+    __init_contact_settings() {
+        let header = document.createElement("div");
+        let summary = document.createElement("span");
+        let button = document.createElement("button");
+        let panel = document.createElement("div");
+
+        header.classList.add("contact-settings-header");
+        summary.classList.add("reporter-filter-summary");
+        summary.innerText = "Contact Settings";
+        button.classList.add("btn", "reporter-filter-toggle");
+        button.type = "button";
+        button.innerText = "Settings";
+        panel.classList.add("reporter-filter-panel");
+        panel.hidden = true;
+
+        button.onclick = (e) => {
+            e.stopPropagation();
+            panel.hidden = !panel.hidden;
+        };
+
+        panel.onclick = (e) => {
+            e.stopPropagation();
+        };
+
+        this.dom_settings_contacts.onclick = (e) => {
+            e.stopPropagation();
+        };
+
+        document.addEventListener("click", () => {
+            panel.hidden = true;
+        });
+
+        header.append(summary);
+        header.append(button);
+        header.append(panel);
+        this.dom_settings_contacts.append(header);
+
+        this.dom_contact_settings = {
+            header,
+            summary,
+            button,
+            panel,
+        };
+    }
+
+    getContactSettingsPanel() {
+        return this.dom_contact_settings?.panel ?? this.dom_settings_contacts;
+    }
+
+    onContactDisplaySettingsChanged() {
+        Object.values(this.contacts).forEach(contact => {
+            contact.createDom(false);
+            contact.updateDom();
+        });
+        this.updateContactsDom();
+    }
+
     updateReporterFilterDom() {
         if (!this.dom_reporter_filter) return;
 
         const reporters = Object.values(this.reporters)
             .sort((a, b) => a.data.name.localeCompare(b.data.name));
         const enabled = reporters.filter(reporter => reporter.isEnabled()).length;
+        const autorefreshSeconds = this.setAutorefreshSetting(
+            Settings.get(this.getAutorefreshSettingKey(), 10)
+        );
 
         this.dom_reporter_filter.summary.innerText = `Enabled reporters: ${enabled}/${reporters.length}`;
 
         while (this.dom_reporter_filter.panel.firstChild) {
             this.dom_reporter_filter.panel.removeChild(this.dom_reporter_filter.panel.firstChild);
         }
+
+        this.dom_reporter_filter.panel.appendChild(
+            this.__createNumberInput(
+                "Autorefresh every (seconds)",
+                this.getAutorefreshSettingKey(),
+                autorefreshSeconds,
+                (e) => {
+                    const seconds = this.setAutorefreshSetting(e.target.value);
+                    e.target.value = seconds;
+                    this.setAutorefresh(seconds * 1000);
+                },
+                {
+                    min: this.getAutorefreshMinimumSeconds(),
+                    step: 1,
+                }
+            )
+        );
 
         let limitContainer = document.createElement("div");
         let limitLabel = document.createElement("span");
@@ -1840,6 +2246,30 @@ class MeshLog {
         limitContainer.append(limitInput);
         this.dom_reporter_filter.panel.append(limitContainer);
 
+        let actionsContainer = document.createElement("div");
+        let selectAllButton = document.createElement("button");
+        let deselectAllButton = document.createElement("button");
+
+        actionsContainer.classList.add("reporter-filter-actions");
+
+        selectAllButton.type = "button";
+        selectAllButton.classList.add("btn");
+        selectAllButton.innerText = "Select All";
+        selectAllButton.onclick = () => {
+            this.setAllReporterFiltersState(true);
+        };
+
+        deselectAllButton.type = "button";
+        deselectAllButton.classList.add("btn");
+        deselectAllButton.innerText = "Deselect All";
+        deselectAllButton.onclick = () => {
+            this.setAllReporterFiltersState(false);
+        };
+
+        actionsContainer.append(selectAllButton);
+        actionsContainer.append(deselectAllButton);
+        this.dom_reporter_filter.panel.append(actionsContainer);
+
         for (const reporter of reporters) {
             const dom = reporter.createSettingsDom(false);
             reporter.updateSettingsDom();
@@ -1847,10 +2277,16 @@ class MeshLog {
         }
     }
 
-    clearReporterFiltersState() {
+    setAllReporterFiltersState(enabled) {
         for (const reporter of Object.values(this.reporters)) {
-            Settings.set(reporter.getSettingsKey(), true);
+            Settings.set(reporter.getSettingsKey(), enabled);
         }
+
+        this.onReporterFilterChanged();
+    }
+
+    clearReporterFiltersState() {
+        this.setAllReporterFiltersState(true);
     }
 
     clearContactListFiltersState() {
@@ -1878,6 +2314,9 @@ class MeshLog {
                 node.checked = Settings.getBool(key, true);
             } else if (node.type === "text") {
                 node.value = Settings.get(key, '');
+            } else if (node.tagName === "SELECT") {
+                const value = String(Settings.get(key, '') ?? '').trim().toLowerCase();
+                node.value = this.isSpecialContactFilter(value) ? value : '';
             }
         }
     }
@@ -1960,6 +2399,21 @@ class MeshLog {
     }
 
     __onTypesChanged() {
+        const typesToLoad = this.getEnabledMessageTypes().filter(type => {
+            return !this.message_type_loaded[type] && !this.message_type_loading[type];
+        });
+
+        if (typesToLoad.length) {
+            this.loadSelectedMessageTypes(
+                {
+                    count: this.initial_messages_count,
+                },
+                {
+                    types: typesToLoad,
+                }
+            );
+        }
+
         this.updateMessagesDom();
     }
 
@@ -2037,7 +2491,7 @@ class MeshLog {
         const sender = String(senderName ?? "").trim().toLowerCase();
 
         if (contactId === undefined || contactId === null) {
-            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+            if (filter && !this.isSpecialContactFilter(filter)) {
                 return sender.includes(filter);
             }
             return !this.hasActiveContactFilter();
@@ -2045,7 +2499,7 @@ class MeshLog {
 
         const contact = this.contacts[contactId] ?? false;
         if (!contact || !contact.dom?.container) {
-            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+            if (filter && !this.isSpecialContactFilter(filter)) {
                 return sender.includes(filter);
             }
             return !this.hasActiveContactFilter();
@@ -2059,18 +2513,18 @@ class MeshLog {
         const sender = String(senderName ?? "").trim().toLowerCase();
 
         if (contactId === undefined || contactId === null) {
-            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+            if (filter && !this.isSpecialContactFilter(filter)) {
                 return sender.includes(filter);
             }
-            return !this.hasActiveContactListFilter();
+            return !filter && !this.hasActiveContactListFilter();
         }
 
         const contact = this.contacts[contactId] ?? false;
         if (!contact) {
-            if (filter && filter !== '{multibyte}' && filter !== '{singlebyte}') {
+            if (filter && !this.isSpecialContactFilter(filter)) {
                 return sender.includes(filter);
             }
-            return !this.hasActiveContactListFilter();
+            return !filter && !this.hasActiveContactListFilter();
         }
 
         let hidden = false;
@@ -2082,19 +2536,17 @@ class MeshLog {
         else if (type == 4 && !Settings.getBool('contactTypes.sensors', true)) { hidden = true; }
 
         if (!hidden && filter) {
-            const name = String(contact.dom?.container?.dataset.name ?? contact.adv?.data?.name ?? senderName ?? "").toLowerCase();
-            const hash = String(contact.dom?.container?.dataset.hash ?? contact.hash ?? "").toLowerCase();
-            const pubkey = String(contact.data.public_key ?? "").toLowerCase();
+            if (this.isSpecialContactFilter(filter)) {
+                hidden = !this.matchesContactSpecialFilter(contact, filter);
+            } else {
+                const name = String(contact.dom?.container?.dataset.name ?? contact.adv?.data?.name ?? senderName ?? "").toLowerCase();
+                const hash = String(contact.dom?.container?.dataset.hash ?? contact.hash ?? "").toLowerCase();
+                const pubkey = String(contact.data.public_key ?? "").toLowerCase();
 
-            let cmpName = name.includes(filter);
-            let cmpHash = hash.startsWith(filter);
-            let cmpPubkey = pubkey.startsWith(filter);
-            hidden = !cmpName && !cmpHash && !cmpPubkey;
-
-            if (filter == '{multibyte}') {
-                hidden = String(contact.data.multibyte ?? '0') == '0';
-            } else if (filter == '{singlebyte}') {
-                hidden = String(contact.data.multibyte ?? '0') == '1';
+                let cmpName = name.includes(filter);
+                let cmpHash = hash.startsWith(filter);
+                let cmpPubkey = pubkey.startsWith(filter);
+                hidden = !cmpName && !cmpHash && !cmpPubkey;
             }
         }
 
@@ -2123,16 +2575,15 @@ class MeshLog {
             if (!hidden) {
                 let filter = Settings.get('contactFilter.value', '').trim().toLowerCase();
                 if (filter) {
-                    let cmpName = item.dataset.name.toLowerCase().includes(filter);
-                    let cmpHash = item.dataset.hash.toLowerCase().startsWith(filter);
-                    let cmpPubkey = item.dataset.pubkey.toLowerCase().startsWith(filter);
-                    hidden = !cmpName && !cmpHash && !cmpPubkey;
+                    const contact = this.contacts[item.dataset.contactId] ?? false;
 
-                    // special selector
-                    if (filter == '{multibyte}') {
-                        hidden = item.dataset.multibyte == '0';
-                    } else if (filter == '{singlebyte}') {
-                        hidden = item.dataset.multibyte == '1';
+                    if (this.isSpecialContactFilter(filter)) {
+                        hidden = !this.matchesContactSpecialFilter(contact, filter);
+                    } else {
+                        let cmpName = item.dataset.name.toLowerCase().includes(filter);
+                        let cmpHash = item.dataset.hash.toLowerCase().startsWith(filter);
+                        let cmpPubkey = item.dataset.pubkey.toLowerCase().startsWith(filter);
+                        hidden = !cmpName && !cmpHash && !cmpPubkey;
                     }
                 }
             }
@@ -2221,7 +2672,52 @@ class MeshLog {
     }
 
     __init_contact_types() {
+        const settingsPanel = this.getContactSettingsPanel();
         const self = this;
+        settingsPanel.appendChild(
+            this.__createCb(
+                "Time warnings",
+                "",
+                this.getContactTimeWarningsSettingKey(),
+                true,
+                () => {
+                    self.onContactDisplaySettingsChanged();
+                }
+            )
+        );
+        settingsPanel.appendChild(
+            this.__createCb(
+                "Location warnings",
+                "",
+                this.getContactLocationWarningsSettingKey(),
+                true,
+                () => {
+                    self.onContactDisplaySettingsChanged();
+                }
+            )
+        );
+        settingsPanel.appendChild(
+            this.__createCb(
+                "Show advert interval",
+                "",
+                this.getContactAdvertIntervalInlineSettingKey(),
+                true,
+                () => {
+                    self.onContactDisplaySettingsChanged();
+                }
+            )
+        );
+        settingsPanel.appendChild(
+            this.__createCb(
+                "Show telemetry",
+                "",
+                this.getContactTelemetrySettingKey(),
+                false,
+                () => {
+                    self.onContactDisplaySettingsChanged();
+                }
+            )
+        );
         this.dom_settings_contacts.appendChild(
             this.__createCb(
                 "",
@@ -2267,14 +2763,9 @@ class MeshLog {
             )
         );
         this.dom_settings_contacts.appendChild(
-            this.__createInput(
-                "Filter by Name or Hash/Key",
-                'contactFilter.value',
-                '',
-                (e) => {
-                    self.sortContacts();
-                }
-            )
+            this.__createContactFilterInput((e) => {
+                self.sortContacts();
+            })
         );
     }
 
@@ -2357,14 +2848,6 @@ class MeshLog {
         this.dom_warning.append(this.dom_warning_messages_btn);
     }
 
-    __addObject(dataset, id, obj) {
-        if (dataset.hasOwnProperty(id)) {
-            dataset[id].merge(obj.data);
-        } else {
-            dataset[id] = obj;
-        }
-    }
-
     __prepareQuery(params={}) {
         let query = {};
         // bax date
@@ -2378,7 +2861,35 @@ class MeshLog {
 
         // max count
         if (params.hasOwnProperty('count')) {
-            query.before = params['count'];
+            query.count = params['count'];
+        }
+
+        if (params.hasOwnProperty('messages_count')) {
+            query.messages_count = params['messages_count'];
+        }
+
+        if (params.hasOwnProperty('contacts_count')) {
+            query.contacts_count = params['contacts_count'];
+        }
+
+        if (params.hasOwnProperty('include_meta')) {
+            query.include_meta = params['include_meta'];
+        }
+
+        if (params.hasOwnProperty('ids')) {
+            query.ids = params['ids'];
+        }
+
+        if (params.hasOwnProperty('include_advertisements')) {
+            query.include_advertisements = params['include_advertisements'];
+        }
+
+        if (params.hasOwnProperty('include_channel_messages')) {
+            query.include_channel_messages = params['include_channel_messages'];
+        }
+
+        if (params.hasOwnProperty('include_direct_messages')) {
+            query.include_direct_messages = params['include_direct_messages'];
         }
 
         // reporter ids
@@ -2399,8 +2910,7 @@ class MeshLog {
             if (query.hasOwnProperty(key)) {
                 const value = query[key];
                 if (Array.isArray(value)) {
-                    // For arrays, append each item with same key
-                    value.forEach(item => urlparams.append(key, item));
+                    value.forEach(item => urlparams.append(`${key}[]`, item));
                 } else if (value !== undefined && value !== null) {
                     urlparams.append(key, value);
                 }
@@ -2410,6 +2920,20 @@ class MeshLog {
         fetch(`${url}?${urlparams.toString()}`)
             .then(response => response.json())
             .then(data => onResponse(data));
+    }
+
+    __fetchQueryPromise(params, url) {
+        return new Promise((resolve, reject) => {
+            this.__fetchQuery(params, url, data => {
+                if (data?.error) {
+                    this.showError(data.error);
+                    reject(new Error(data.error));
+                    return;
+                }
+
+                resolve(data);
+            });
+        });
     }
 
     showWarning(msg) {
@@ -2435,29 +2959,229 @@ class MeshLog {
         }
     }
 
-    __loadObjects(dataset, data, klass) {
+    __loadObjects(dataset, data, klass, options = {}) {
         if (data.error) {
             this.showError(data.error);
-            return 0;
+            return [];
         }
 
-        for (let i=0;i<data.objects.length;i++) {
-            const o = data.objects[i];
-            const obj = new klass(this, o);
-            const id = klass.idPrefix + o.id;
-            this.__addObject(dataset, id, obj);
+        const loaded = [];
+        const objects = Array.isArray(data?.objects) ? data.objects : [];
+        const trackLatest = options.trackLatest !== false;
+        const latestTarget = options.latestTarget ?? 'message';
 
-            if (o.created_at) {
-                let created_at = new Date(o.created_at).getTime();
+        for (let i=0;i<objects.length;i++) {
+            const o = objects[i];
+            const id = klass.idPrefix + o.id;
+            if (dataset.hasOwnProperty(id)) {
+                dataset[id].merge(o);
+            } else {
+                dataset[id] = new klass(this, o);
+            }
+            loaded.push(dataset[id]);
+
+            if (trackLatest) {
+                const latestValue = o.activity_at ?? o.created_at;
+                let created_at = new Date(latestValue).getTime();
                 if (created_at != 0) {
-                    if (created_at > this.latest) {
+                    if (latestTarget === 'meta') {
+                        if (created_at > this.latest_meta) {
+                            this.latest_meta = created_at;
+                        }
+                    } else if (created_at > this.latest) {
                         this.latest = created_at;
                     }
                 }
             }
         }
 
-        return data.objects;
+        return loaded;
+    }
+
+    __loadEndpoint(url, params, dataset, klass, options = {}) {
+        return this.__fetchQueryPromise(params, url)
+            .then(data => this.__loadObjects(dataset, data, klass, options));
+    }
+
+    getEnabledMessageTypes() {
+        const enabled = [];
+
+        if (Settings.getBool('messageTypes.advertisements', true)) {
+            enabled.push('advertisements');
+        }
+        if (Settings.getBool('messageTypes.channel', true)) {
+            enabled.push('channel_messages');
+        }
+        if (Settings.getBool('messageTypes.direct', false)) {
+            enabled.push('direct_messages');
+        }
+
+        return enabled;
+    }
+
+    getMessageEndpoint(type) {
+        switch (type) {
+            case 'advertisements':
+                return {
+                    url: 'api/v1/advertisements',
+                    klass: MeshLogAdvertisement,
+                };
+            case 'channel_messages':
+                return {
+                    url: 'api/v1/channel_messages',
+                    klass: MeshLogChannelMessage,
+                };
+            case 'direct_messages':
+                return {
+                    url: 'api/v1/direct_messages',
+                    klass: MeshLogDirectMessage,
+                };
+            default:
+                return null;
+        }
+    }
+
+    loadMeta(params = {}, options = {}) {
+        const includeContacts = options.includeContacts !== false;
+        const metaParams = {
+            after_ms: params.after_ms ?? 0,
+            before_ms: params.before_ms ?? 0,
+        };
+        const reporterParams = {
+            ...metaParams,
+            count: params.reporters_count ?? params.count ?? this.default_api_count,
+        };
+        const channelParams = {
+            ...metaParams,
+            count: params.channels_count ?? params.count ?? this.default_api_count,
+        };
+        const contactParams = {
+            ...metaParams,
+            count: params.contacts_count ?? this.default_contacts_count,
+            telemetry: params.telemetry ?? params.include_telemetry ?? (this.shouldShowContactTelemetry() ? 1 : 0),
+        };
+
+        return Promise.all([
+            this.__loadEndpoint('api/v1/reporters', reporterParams, this.reporters, MeshLogReporter, {
+                latestTarget: 'meta',
+            }),
+            this.__loadEndpoint('api/v1/channels', channelParams, this.channels, MeshLogChannel, {
+                latestTarget: 'meta',
+            }),
+        ]).then(([reporters, channels]) => {
+            const contactsPromise = includeContacts
+                ? this.__loadEndpoint('api/v1/contacts', contactParams, this.contacts, MeshLogContact, {
+                    latestTarget: 'meta',
+                })
+                : Promise.resolve([]);
+
+            return contactsPromise.then(contacts => {
+                this.__init_reporters();
+                this.onLoadChannels(channels);
+                if (includeContacts) {
+                    this.onLoadContacts(contacts);
+                }
+
+                return {
+                    reporters,
+                    channels,
+                    contacts,
+                };
+            });
+        });
+    }
+
+    loadMessageIds(params = {}, types = null) {
+        const enabledTypes = types ?? this.getEnabledMessageTypes();
+        const requestedTypes = new Set(enabledTypes);
+
+        if (requestedTypes.size < 1) {
+            return Promise.resolve({
+                advertisements: [],
+                channel_messages: [],
+                direct_messages: [],
+            });
+        }
+
+        return this.__fetchQueryPromise({
+            count: params.count ?? this.initial_messages_count,
+            after_ms: params.after_ms ?? 0,
+            before_ms: params.before_ms ?? 0,
+            include_advertisements: requestedTypes.has('advertisements') ? 1 : 0,
+            include_channel_messages: requestedTypes.has('channel_messages') ? 1 : 0,
+            include_direct_messages: requestedTypes.has('direct_messages') ? 1 : 0,
+        }, 'api/v1/message_ids');
+    }
+
+    loadSelectedMessageTypes(params = {}, options = {}) {
+        const types = Array.isArray(options.types) ? options.types : this.getEnabledMessageTypes();
+        if (types.length < 1) {
+            const empty = {
+                advertisements: [],
+                channel_messages: [],
+                direct_messages: [],
+            };
+            if (options.onload) {
+                options.onload(empty);
+            }
+            return Promise.resolve(empty);
+        }
+
+        types.forEach(type => {
+            this.message_type_loading[type] = true;
+        });
+
+        return Promise.all(types.map(type => {
+            const endpoint = this.getMessageEndpoint(type);
+            if (!endpoint) {
+                return Promise.resolve({ type, loaded: [] });
+            }
+
+            return this.__loadEndpoint(endpoint.url, {
+                count: params.count ?? this.initial_messages_count,
+                after_ms: params.after_ms ?? 0,
+                before_ms: params.before_ms ?? 0,
+            }, this.messages, endpoint.klass).then(loaded => ({ type, loaded }));
+        }))
+            .then(results => {
+                const loadedByType = {
+                    advertisements: [],
+                    channel_messages: [],
+                    direct_messages: [],
+                };
+                const loadedCounts = {
+                    advertisements: 0,
+                    channel_messages: 0,
+                    direct_messages: 0,
+                };
+
+                results.forEach(result => {
+                    loadedByType[result.type] = result.loaded;
+                    loadedCounts[result.type] = result.loaded.length;
+                    this.message_type_loaded[result.type] = true;
+                    this.message_type_loading[result.type] = false;
+                });
+
+                this.onLoadMessages([
+                    ...loadedByType.advertisements,
+                    ...loadedByType.channel_messages,
+                    ...loadedByType.direct_messages,
+                ], {
+                    appendOlder: options.appendOlder === true,
+                });
+
+                if (options.onload) {
+                    options.onload(loadedByType, loadedCounts);
+                }
+
+                return loadedByType;
+            })
+            .catch(error => {
+                types.forEach(type => {
+                    this.message_type_loading[type] = false;
+                });
+                throw error;
+            });
     }
 
     resetData() {
@@ -2480,6 +3204,17 @@ class MeshLog {
         this.visible_contacts = {};
         this.links = {};
         this.latest = 0;
+        this.latest_meta = 0;
+        this.message_type_loaded = {
+            advertisements: false,
+            channel_messages: false,
+            direct_messages: false,
+        };
+        this.message_type_loading = {
+            advertisements: false,
+            channel_messages: false,
+            direct_messages: false,
+        };
 
         this.dom_logs.replaceChildren();
         this.dom_contacts.replaceChildren();
@@ -2495,96 +3230,212 @@ class MeshLog {
         const interval = this.interval ?? 0;
         this.setAutorefresh(0);
         this.resetData();
-        this.loadAll();
+        this.loadInitial();
         this.setAutorefresh(interval);
     }
 
+    getOldestMessageTime() {
+        let oldest = 0;
+
+        Object.values(this.messages).forEach(msg => {
+            if (!oldest || msg.time < oldest) {
+                oldest = msg.time;
+            }
+        });
+
+        return oldest;
+    }
+
+    onLogsScroll() {
+        if (this.loading_old || !this.has_more_old) return;
+
+        const threshold = 240;
+        const remaining = this.dom_logs.scrollHeight - this.dom_logs.scrollTop - this.dom_logs.clientHeight;
+        if (remaining <= threshold) {
+            this.loadOlderPage();
+        }
+    }
+
+    loadInitial(onload=null) {
+        this.has_more_old = true;
+        this.loading_old = false;
+
+        this.loadMeta({
+            after_ms: 0,
+            contacts_count: 1000,
+        }).then(meta => {
+            return this.loadSelectedMessageTypes({
+                count: this.initial_messages_count,
+            }, {
+                onload: (messages) => {
+                    if (onload) {
+                        onload({
+                            reporters: meta.reporters,
+                            contacts: meta.contacts,
+                            groups: meta.channels,
+                            advertisements: messages.advertisements,
+                            channel_messages: messages.channel_messages,
+                            direct_messages: messages.direct_messages,
+                        });
+                    }
+                },
+            });
+        }).catch(() => {});
+    }
+
+    loadOlderPage(onload=null) {
+        if (this.loading_old || !this.has_more_old) return;
+
+        const before_ms = this.getOldestMessageTime();
+        if (!before_ms) {
+            this.has_more_old = false;
+            return;
+        }
+
+        this.loading_old = true;
+        const pageSize = this.older_messages_page_size;
+
+        this.loadSelectedMessageTypes({
+            before_ms,
+            count: pageSize,
+        }, {
+            appendOlder: true,
+            onload: (messages, loadedCounts) => {
+                const loadedMessages =
+                    (loadedCounts?.advertisements ?? 0) +
+                    (loadedCounts?.channel_messages ?? 0) +
+                    (loadedCounts?.direct_messages ?? 0);
+
+                if (loadedMessages < 1) {
+                    this.has_more_old = false;
+                } else {
+                    this.has_more_old =
+                        (loadedCounts?.advertisements ?? 0) >= pageSize ||
+                        (loadedCounts?.channel_messages ?? 0) >= pageSize ||
+                        (loadedCounts?.direct_messages ?? 0) >= pageSize;
+                }
+
+                this.loading_old = false;
+                if (onload) onload(messages);
+            },
+        }).catch(() => {
+            this.loading_old = false;
+        });
+    }
+
     loadNew(onload=null) {
-        let params = { 
-            "after_ms": this.latest
-        };
-        this.loadAll(params, onload);
+        const metaAfter = this.latest_meta;
+        const messagesAfter = this.latest;
+
+        this.loadMeta({
+            after_ms: metaAfter,
+            contacts_count: 1000,
+        }).then(meta => {
+            return this.loadMessageIds({
+                after_ms: messagesAfter,
+                count: this.initial_messages_count,
+            }).then(messageIds => {
+                const loaders = [
+                    ['advertisements', 'api/v1/advertisements', MeshLogAdvertisement],
+                    ['channel_messages', 'api/v1/channel_messages', MeshLogChannelMessage],
+                    ['direct_messages', 'api/v1/direct_messages', MeshLogDirectMessage],
+                ]
+                    .filter(([type]) => Array.isArray(messageIds[type]) && messageIds[type].length > 0)
+                    .map(([type, url, klass]) => {
+                        this.message_type_loading[type] = true;
+                        return this.__loadEndpoint(url, {
+                            ids: messageIds[type],
+                            count: messageIds[type].length,
+                        }, this.messages, klass)
+                            .then(loaded => {
+                                this.message_type_loaded[type] = true;
+                                this.message_type_loading[type] = false;
+                                return [type, loaded];
+                            })
+                            .catch(error => {
+                                this.message_type_loading[type] = false;
+                                throw error;
+                            });
+                    });
+
+                return Promise.all(loaders).then(results => {
+                    const messages = {
+                        advertisements: [],
+                        channel_messages: [],
+                        direct_messages: [],
+                    };
+
+                    results.forEach(([type, loaded]) => {
+                        messages[type] = loaded;
+                    });
+
+                    this.onLoadMessages([
+                        ...messages.advertisements,
+                        ...messages.channel_messages,
+                        ...messages.direct_messages,
+                    ]);
+
+                    if (onload) {
+                        onload({
+                            reporters: meta.reporters,
+                            contacts: meta.contacts,
+                            groups: meta.channels,
+                            advertisements: messages.advertisements,
+                            channel_messages: messages.channel_messages,
+                            direct_messages: messages.direct_messages,
+                        });
+                    }
+                });
+            });
+        }).catch(() => {});
     }
 
     loadOld(onload=null) {
-        const self = this;
-        let oldest_adv = this.latest;
-        let oldest_grp = this.latest;
-        let oldest_dm  = this.latest;
-
-        Object.entries(this.messages).forEach(([k,v]) => {
-            if (v instanceof MeshLogAdvertisement) {
-                if (v.time < oldest_adv) oldest_adv = v.time;
-            } else if (v instanceof MeshLogChannelMessage) {
-                if (v.time < oldest_grp) oldest_adv = v.time;
-            } else if (v instanceof MeshLogDirectMessage) {
-                if (v.time < oldest_dm) oldest_adv = v.time;
-            }
-        });
-
-        this.__fetchQuery({ "before_ms": oldest_adv }, 'api/v1/advertisements', data => {
-            const rep = self.__loadObjects(self.advertisements, data, MeshLogAdvertisement);
-            if (rep.length) console.log(`${rep.length} advertisements loaded`);
-            self.onLoadAll();
-            if (onload) onload();
-        });
-
-        this.__fetchQuery({ "before_ms": oldest_grp }, 'api/v1/channel_messages', data => {
-            const rep = self.__loadObjects(self.channel_messages, data, MeshLogChannelMessage);
-            if (rep.length) console.log(`${rep.length} group messages loaded`);
-            self.onLoadAll();
-            if (onload) onload();
-        });
-
-        this.__fetchQuery({ "before_ms": oldest_dm }, 'api/v1/direct_messages', data => {
-            const rep = self.__loadObjects(self.direct_messages, data, MeshLogDirectMessage);
-            if (rep.length) console.log(`${rep.length} direct messages loaded`);
-            self.onLoadAll();
-            if (onload) onload();
-        });
+        this.loadOlderPage(onload);
     }
 
     loadAll(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/all', data => {
-            if (data.error) {
-                this.showError(data.error);
-                return;
-            }
+        const includeMeta = Number(params.include_meta ?? 1) !== 0;
+        const messageCount = params.messages_count ?? params.count ?? this.initial_messages_count;
 
-            const rep1 = this.__loadObjects(this.reporters, data.reporters, MeshLogReporter);
-            const rep2 = this.__loadObjects(this.contacts, data.contacts, MeshLogContact);
-            const rep4 = this.__loadObjects(this.channels, data.channels, MeshLogChannel);
+        const metaPromise = includeMeta
+            ? this.loadMeta({
+                after_ms: params.after_ms ?? 0,
+                before_ms: params.before_ms ?? 0,
+                contacts_count: params.contacts_count ?? this.default_contacts_count,
+            })
+            : Promise.resolve({
+                reporters: [],
+                contacts: [],
+                channels: [],
+            });
 
-            const rep3 = this.__loadObjects(this.messages, data.advertisements, MeshLogAdvertisement);
-            const rep5 = this.__loadObjects(this.messages, data.channel_messages, MeshLogChannelMessage);
-            const rep6 = this.__loadObjects(this.messages, data.direct_messages, MeshLogDirectMessage);
-
-            if (rep1.length) console.log(`${rep1.length} reporters loaded`);
-            if (rep2.length) console.log(`${rep2.length} contacts loaded`);
-            if (rep3.length) console.log(`${rep3.length} advertisements loaded`);
-            if (rep4.length) console.log(`${rep4.length} groups loaded`);
-            if (rep5.length) console.log(`${rep5.length} group messages loaded`);
-            if (rep6.length) console.log(`${rep6.length} direct messages loaded`);
-
-            this.__init_reporters();
-            this.onLoadAll();
-
-            if (onload) {
-                onload({
-                    reporters: rep1,
-                    contacts: rep2,
-                    groups: rep4,
-                    advertisements: rep3,
-                    channel_messages: rep5,
-                    direct_messages: rep6,
-                });
-            }
-        });
+        metaPromise.then(meta => {
+            return this.loadSelectedMessageTypes({
+                after_ms: params.after_ms ?? 0,
+                before_ms: params.before_ms ?? 0,
+                count: messageCount,
+            }, {
+                appendOlder: params.hasOwnProperty('before_ms') && !includeMeta,
+                onload: (messages) => {
+                    if (onload) {
+                        onload({
+                            reporters: meta.reporters,
+                            contacts: meta.contacts,
+                            groups: meta.channels,
+                            advertisements: messages.advertisements,
+                            channel_messages: messages.channel_messages,
+                            direct_messages: messages.direct_messages,
+                        });
+                    }
+                },
+            });
+        }).catch(() => {});
     }
 
-    onLoadContacts() {
+    onLoadContacts(contacts = Object.values(this.contacts)) {
         let repHashes = {};
-        Object.entries(this.contacts).forEach(([id,contact]) => {
+        Object.values(this.contacts).forEach(contact => {
             if (contact.isRepeater()) {
                 let hashstr = contact.hash;
                 if (!repHashes.hasOwnProperty(hashstr)) {
@@ -2595,7 +3446,7 @@ class MeshLog {
             }
         });
 
-        Object.entries(this.contacts).forEach(([id,contact]) => {
+        contacts.forEach(contact => {
             let latest = contact.last;
             if (!latest) return;
 
@@ -2612,8 +3463,8 @@ class MeshLog {
         this.updateContactsDom();
     }
 
-    onLoadChannels() {
-        Object.entries(this.channels).forEach(([id,channel]) => {
+    onLoadChannels(channels = Object.values(this.channels)) {
+        channels.forEach(channel => {
             this.addChannel(channel);
         });
     }
@@ -2627,26 +3478,30 @@ class MeshLog {
         }
     }
 
-    addMessage(msg) {
+    addMessage(msg, options={}) {
         let isnew = msg.dom ? false : true;
         let dom = msg.createDom();
         msg.updateDom();
 
         if (isnew) {
-            // find pos by date
-            let inserted = false;
-            let newTime = dom.container.dataset.time;
-            for (let child of this.dom_logs.children) {
-                const childTime = child.dataset.time;
-                if (newTime > childTime) {
-                    this.dom_logs.insertBefore(dom.container, child);
-                    inserted = true;
-                    break;
+            if (options.appendOlder) {
+                this.dom_logs.appendChild(dom.container);
+            } else {
+                // find pos by date
+                let inserted = false;
+                let newTime = dom.container.dataset.time;
+                for (let child of this.dom_logs.children) {
+                    const childTime = child.dataset.time;
+                    if (newTime > childTime) {
+                        this.dom_logs.insertBefore(dom.container, child);
+                        inserted = true;
+                        break;
+                    }
                 }
-            }
 
-            // If not inserted, append at the end
-            if (!inserted) this.dom_logs.appendChild(dom.container);
+                // If not inserted, append at the end
+                if (!inserted) this.dom_logs.appendChild(dom.container);
+            }
 
             if (this.contacts.hasOwnProperty(msg.data.contact_id)) {
                 let contact = this.contacts[msg.data.contact_id];
@@ -2679,63 +3534,88 @@ class MeshLog {
         this.updateMessagesFilterWarning();
     }
 
-    onLoadMessages() {
-        Object.entries(this.messages).forEach(([id, msg]) => { this.addMessage(msg); });
-        this.updateMessagesDom();
+    onLoadMessages(messages = Object.values(this.messages), options = {}) {
+        const sorted = [...messages].sort((a, b) => b.time - a.time);
+        sorted.forEach(msg => { this.addMessage(msg, options); });
+        this.updateMessagesFilterWarning();
     }
 
-    onLoadAll() {
-        this.onLoadMessages();
-        this.onLoadContacts();
-        this.onLoadChannels();
+    onLoadAll(loaded = {}, options = {}) {
+        this.onLoadMessages(loaded.messages ?? Object.values(this.messages), {
+            appendOlder: options.appendOlder === true,
+        });
+
+        if (options.includeMeta !== false) {
+            this.onLoadContacts(loaded.contacts ?? Object.values(this.contacts));
+            this.onLoadChannels(loaded.channels ?? Object.values(this.channels));
+        }
     }
 
     loadReporters(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/reporters', data => {
-            const sz = this.__loadObjects(this.reporters, data, MeshLogObject);
-            console.log(`${sz} reporters loaded`);
-            if (onload) onload();
-        });
+        this.__loadEndpoint('api/v1/reporters', params, this.reporters, MeshLogReporter, {
+            latestTarget: 'meta',
+        }).then(sz => {
+            console.log(`${sz.length} reporters loaded`);
+            this.__init_reporters();
+            if (onload) onload(sz);
+        }).catch(() => {});
     }
 
     loadContacts(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/contacts', data => {
-            const sz = this.__loadObjects(this.contacts, data, MeshLogContact);
-            console.log(`${sz} contacts loaded`);
-            if (onload) onload();
-        });
+        const contactParams = {
+            ...params,
+        };
+        if (!contactParams.hasOwnProperty('telemetry') && !contactParams.hasOwnProperty('include_telemetry')) {
+            contactParams.telemetry = this.shouldShowContactTelemetry() ? 1 : 0;
+        }
+
+        this.__loadEndpoint('api/v1/contacts', contactParams, this.contacts, MeshLogContact, {
+            latestTarget: 'meta',
+        }).then(sz => {
+            console.log(`${sz.length} contacts loaded`);
+            this.onLoadContacts(sz);
+            if (onload) onload(sz);
+        }).catch(() => {});
     }
 
     loadAdvertisements(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/advertisements', data => {
-            const sz = this.__loadObjects(this.advertisements, data, MeshLogAdvertisement);
-            console.log(`${sz} advertisements loaded`);
-            if (onload) onload();
-        });
+        this.__loadEndpoint('api/v1/advertisements', params, this.messages, MeshLogAdvertisement)
+            .then(sz => {
+                console.log(`${sz.length} advertisements loaded`);
+                this.message_type_loaded.advertisements = true;
+                this.onLoadMessages(sz);
+                if (onload) onload(sz);
+            }).catch(() => {});
     }
 
     loadChannels(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/channels', data => {
-            const sz = this.__loadObjects(this.channels, data, MeshLogObject);
-            console.log(`${sz} channels loaded`);
-            if (onload) onload();
-        });
+        this.__loadEndpoint('api/v1/channels', params, this.channels, MeshLogChannel, {
+            latestTarget: 'meta',
+        }).then(sz => {
+            console.log(`${sz.length} channels loaded`);
+            this.onLoadChannels(sz);
+            if (onload) onload(sz);
+        }).catch(() => {});
     }
 
     loadChannelMessages(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/channel_messages', data => {
-            const sz = this.__loadObjects(this.channel_messages, data, MeshLogChannelMessage);
-            console.log(`${sz} channels messages loaded`);
-            if (onload) onload();
-        });
+        this.__loadEndpoint('api/v1/channel_messages', params, this.messages, MeshLogChannelMessage)
+            .then(sz => {
+                console.log(`${sz.length} channels messages loaded`);
+                this.message_type_loaded.channel_messages = true;
+                this.onLoadMessages(sz);
+                if (onload) onload(sz);
+            }).catch(() => {});
     }
 
     loadDirectMessages(params={}, onload=null) {
-        this.__fetchQuery(params, 'api/v1/direct_messages', data => {
-            const sz = this.__loadObjects(this.direct_messages, data, MeshLogDirectMessage);
-            console.log(`${sz} direct messages loaded`);
-            if (onload) onload();
-        });
+        this.__loadEndpoint('api/v1/direct_messages', params, this.messages, MeshLogDirectMessage)
+            .then(sz => {
+                console.log(`${sz.length} direct messages loaded`);
+                this.message_type_loaded.direct_messages = true;
+                this.onLoadMessages(sz);
+                if (onload) onload(sz);
+            }).catch(() => {});
     }
 
     fadeMarkers(opacity=0.2) {
@@ -3044,12 +3924,16 @@ class MeshLog {
             this.timer = null;
         }
 
-        if (interval >= 5000) {
-            this.interval = interval;
-            const self = this;
-            this.timer = setTimeout(() => { self.refresh(); }, interval);
-        } else {
+        const parsed = parseInt(interval, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
             this.interval = 0;
+            return;
+        }
+
+        this.interval = Math.max(this.getAutorefreshMinimumSeconds() * 1000, parsed);
+        if (this.interval >= this.getAutorefreshMinimumSeconds() * 1000) {
+            const self = this;
+            this.timer = setTimeout(() => { self.refresh(); }, this.interval);
         }
     }
 

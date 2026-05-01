@@ -8,13 +8,15 @@ $meshlog = new MeshLog($config['db']);
 $err = $meshlog->getError();
 
 if ($err) {
-    $results = array('error' => $err);  
+    $results = array('error' => $err);
 } else {
-    $results = $meshlog->getChannels(array(
-        'offset' => getParam('offset', 0),
+    $results = $meshlog->getRecentMessageIds(array(
         'count' => getParam('count', DEFAULT_COUNT),
         'after_ms' => getParam('after_ms', 0),
         'before_ms' => getParam('before_ms', 0),
+        'include_advertisements' => getParam('include_advertisements', 1),
+        'include_channel_messages' => getParam('include_channel_messages', 1),
+        'include_direct_messages' => getParam('include_direct_messages', 1),
     ));
 }
 

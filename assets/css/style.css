@@ -189,6 +189,57 @@ h2 {
     align-items: center;
 }
 
+.contact-row {
+    display: block;
+}
+
+.contact-row-top,
+.contact-row-bottom {
+    display: flex;
+    align-items: center;
+}
+
+.contact-row-bottom {
+    gap: 4px;
+}
+
+.contact-name {
+    min-width: 0;
+}
+
+.contact-inline-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.contact-inline-warning {
+    line-height: 1;
+}
+
+.contact-row-warning {
+    margin-left: auto;
+}
+
+.contact-row-warning:empty {
+    display: none;
+}
+
+.contact-inline-text {
+    display: inline-block;
+}
+
+.message-inline-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+
 .log-entry-info {
     margin: 0;
     display: flex;
@@ -223,7 +274,6 @@ h2 {
 }
 
 .log-entry-cehckbox {
-    margin-left: auto;
     white-space: nowrap;
 }
 
@@ -408,6 +458,13 @@ h2 {
     gap: 8px;
 }
 
+.contact-settings-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .reporter-filter-summary {
     flex: 1;
 }
@@ -507,6 +564,35 @@ h2 {
     padding: 4px;
     margin-top: 4px;
     flex: 1;
+}
+
+.settings-input-with-select {
+    gap: 8px;
+    align-items: stretch;
+}
+
+.settings-input-select {
+    background-color: #262626;
+    border: solid 1px #2a536d;
+    border-radius: 4px;
+    padding: 4px;
+    margin-top: 4px;
+    max-width: 160px;
+}
+
+.contact-interval-text {
+    font-size: 0.78em;
+    line-height: 1;
+}
+
+.contact-inline-meta .contact-interval-warning {
+    color: #b3ac25 !important;
+    font-weight: normal;
+}
+
+.contact-inline-meta .contact-interval-critical {
+    color: #c8514c !important;
+    font-weight: normal;
 }
 
 .icon-16 {

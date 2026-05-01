@@ -22,7 +22,7 @@ define("MAX_GETALL_REPORTS_COUNT", 5000);
 
 class MeshLog {
     private $error = '';
-    private $version = 9;
+    private $version = 10;
     private $settings = array(
         MeshlogSetting::KEY_DB_VERSION => 0,
         MeshlogSetting::KEY_MAX_CONTACT_AGE => 1814400,
@@ -677,6 +677,7 @@ class MeshLog {
         $sql = "
             SELECT
                 $tfields,
+                GREATEST(t.created_at, COALESCE(MAX(r.created_at), t.created_at)) AS activity_at,
                 JSON_ARRAYAGG(
                         JSON_OBJECT(
                             'id', r.id,
@@ -701,39 +702,197 @@ class MeshLog {
         return $sql;
     }
 
-    private function getTimeFiltersSql($params) {
+    private function getTimeFiltersSql($params, $alias = 't', $suffix = '') {
         $after_ms = $params['after_ms'] ?? 0;
         $before_ms = $params['before_ms'] ?? 0;
 
         $binds = [];
         $sqlWhere = "";
+        $afterParam = ':after_ms' . $suffix;
+        $beforeParam = ':before_ms' . $suffix;
         if ($after_ms > 0) {
             $after_ms = floor($after_ms / 1000);
-            $sqlWhere = "t.created_at > FROM_UNIXTIME(:after_ms) ";
-            $binds[] = array(":after_ms", $after_ms, PDO::PARAM_INT);
+            $sqlWhere = "$alias.created_at > FROM_UNIXTIME($afterParam) ";
+            $binds[] = array($afterParam, $after_ms, PDO::PARAM_INT);
         }
         if ($before_ms > 0) {
             $before_ms = floor($before_ms / 1000);
             if (strlen($sqlWhere)) {
-                $sqlWhere .= " AND t.created_at < FROM_UNIXTIME(:before_ms)";
+                $sqlWhere .= " AND $alias.created_at < FROM_UNIXTIME($beforeParam)";
             } else {
-                $sqlWhere = "t.created_at < FROM_UNIXTIME(:before_ms)";
+                $sqlWhere = "$alias.created_at < FROM_UNIXTIME($beforeParam)";
             }
-            $binds[] = array(":before_ms", $before_ms, PDO::PARAM_INT);
+            $binds[] = array($beforeParam, $before_ms, PDO::PARAM_INT);
         }
 
         return array($sqlWhere, $binds);
+    }
+
+    public function getRecentMessageIds($params) {
+        $limit = (int) ($params['count'] ?? DEFAULT_COUNT);
+        $includeAdvertisements = !array_key_exists('include_advertisements', $params) || (int) $params['include_advertisements'] !== 0;
+        $includeChannelMessages = !array_key_exists('include_channel_messages', $params) || (int) $params['include_channel_messages'] !== 0;
+        $includeDirectMessages = !array_key_exists('include_direct_messages', $params) || (int) $params['include_direct_messages'] !== 0;
+        $after_ms = (int) ($params['after_ms'] ?? 0);
+        $before_ms = (int) ($params['before_ms'] ?? 0);
+
+        if ($limit < 1) {
+            return array(
+                'advertisements' => array(),
+                'channel_messages' => array(),
+                'direct_messages' => array(),
+            );
+        }
+        if ($limit > MAX_COUNT) {
+            $limit = MAX_COUNT;
+        }
+
+        $binds = array();
+        $queries = array();
+        if ($includeAdvertisements) {
+            $queries[] = array(
+                'type' => 'advertisements',
+                'suffix' => '_advertisements',
+                'sql' => "
+                    SELECT 'advertisements' AS message_type, recent.id, recent.activity_at
+                    FROM (
+                        SELECT
+                            a.id,
+                            GREATEST(a.created_at, COALESCE(MAX(ar.created_at), a.created_at)) AS activity_at
+                        FROM advertisements a
+                        LEFT JOIN advertisement_reports ar ON ar.advertisement_id = a.id
+                        GROUP BY a.id
+                    ) recent
+                ",
+            );
+        }
+        if ($includeChannelMessages) {
+            $queries[] = array(
+                'type' => 'channel_messages',
+                'suffix' => '_channel_messages',
+                'sql' => "
+                    SELECT 'channel_messages' AS message_type, recent.id, recent.activity_at
+                    FROM (
+                        SELECT
+                            cm.id,
+                            GREATEST(cm.created_at, COALESCE(MAX(cmr.created_at), cm.created_at)) AS activity_at
+                        FROM channel_messages cm
+                        JOIN channels c ON c.id = cm.channel_id AND c.enabled = 1
+                        LEFT JOIN channel_message_reports cmr ON cmr.channel_message_id = cm.id
+                        GROUP BY cm.id
+                    ) recent
+                ",
+            );
+        }
+        if ($includeDirectMessages) {
+            $queries[] = array(
+                'type' => 'direct_messages',
+                'suffix' => '_direct_messages',
+                'sql' => "
+                    SELECT 'direct_messages' AS message_type, recent.id, recent.activity_at
+                    FROM (
+                        SELECT
+                            dm.id,
+                            GREATEST(dm.created_at, COALESCE(MAX(dmr.created_at), dm.created_at)) AS activity_at
+                        FROM direct_messages dm
+                        LEFT JOIN direct_message_reports dmr ON dmr.direct_message_id = dm.id
+                        GROUP BY dm.id
+                    ) recent
+                ",
+            );
+        }
+
+        if (!count($queries)) {
+            return array(
+                'advertisements' => array(),
+                'channel_messages' => array(),
+                'direct_messages' => array(),
+            );
+        }
+
+        $parts = array();
+        foreach ($queries as $query) {
+            $sql = $query['sql'];
+
+            $filters = array();
+            if ($after_ms > 0) {
+                $afterParam = ':after_ms' . $query['suffix'];
+                $filters[] = "recent.activity_at > FROM_UNIXTIME($afterParam)";
+                $binds[] = array($afterParam, floor($after_ms / 1000), PDO::PARAM_INT);
+            }
+            if ($before_ms > 0) {
+                $beforeParam = ':before_ms' . $query['suffix'];
+                $filters[] = "recent.activity_at < FROM_UNIXTIME($beforeParam)";
+                $binds[] = array($beforeParam, floor($before_ms / 1000), PDO::PARAM_INT);
+            }
+
+            if (count($filters)) {
+                $sql .= " WHERE " . implode(' AND ', $filters);
+            }
+
+            $parts[] = $sql;
+        }
+
+        $sql = "
+            SELECT message_type, id
+            FROM (
+                " . implode("
+                UNION ALL
+                ", $parts) . "
+            ) recent_messages
+            ORDER BY activity_at DESC, id DESC
+            LIMIT :limit
+        ";
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        foreach ($binds as $bind) {
+            $stmt->bindValue($bind[0], $bind[1], $bind[2]);
+        }
+        $stmt->execute();
+
+        $results = array(
+            'advertisements' => array(),
+            'channel_messages' => array(),
+            'direct_messages' => array(),
+        );
+
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $type = $row['message_type'];
+            if (!isset($results[$type])) {
+                continue;
+            }
+            $results[$type][] = (int) $row['id'];
+        }
+
+        return $results;
     }
 
     public function getReportedQuick($params, $tklass, $rklass, $extra, $binds) {
         $offset = (int) ($params['offset'] ?? 0);
         $limit = (int) ($params['count'] ?? DEFAULT_COUNT);
         $where = $this->getTimeFiltersSql($params);
+        $filters = array();
         if (!empty($where[0])) {
-            $extra .= " WHERE " . $where[0];
+            $filters[] = $where[0];
             foreach ($where[1] as $w) {
                 $binds[] = $w;
             }
+        }
+
+        $ids = $params['ids'] ?? array();
+        if (is_array($ids) && count($ids)) {
+            $placeholders = array();
+            foreach (array_values($ids) as $index => $id) {
+                $param = ':id_' . $index;
+                $placeholders[] = $param;
+                $binds[] = array($param, (int) $id, PDO::PARAM_INT);
+            }
+            $filters[] = 't.id IN (' . implode(',', $placeholders) . ')';
+        }
+
+        if (count($filters)) {
+            $extra .= " WHERE " . implode(' AND ', $filters);
         }
 
         if ($limit > MAX_COUNT) $limit = MAX_COUNT;
@@ -801,10 +960,24 @@ class MeshLog {
         );
     }
 
+    private function buildIntInClause($values, $prefix = 'id') {
+        $placeholders = array();
+        $binds = array();
+
+        foreach (array_values($values) as $index => $value) {
+            $param = ':' . $prefix . '_' . $index;
+            $placeholders[] = $param;
+            $binds[] = array($param, (int) $value, PDO::PARAM_INT);
+        }
+
+        return array($placeholders, $binds);
+    }
+
     public function getContactsQuick($params) {
         $maxage = $this->getConfig(MeshlogSetting::KEY_MAX_CONTACT_AGE);
         $offset = (int) ($params['offset'] ?? 0);
         $limit = (int) ($params['count'] ?? DEFAULT_COUNT);
+        $includeTelemetry = (int) ($params['telemetry'] ?? ($params['include_telemetry'] ?? 0)) !== 0;
         $extra = "WHERE last_heard_at >= NOW() - INTERVAL $maxage SECOND ";
         $binds = array();
         $where = $this->getTimeFiltersSql($params);
@@ -823,58 +996,7 @@ class MeshLog {
                 t.hash_size,
                 t.multibyte,
                 t.last_heard_at,
-                t.created_at,
-
-                -- Reporter ids that have seen this contact in any advertisement
-                (
-                    SELECT COALESCE(JSON_ARRAYAGG(ar.reporter_id), JSON_ARRAY())
-                    FROM advertisements a2
-                    JOIN advertisement_reports ar ON ar.advertisement_id = a2.id
-                    WHERE a2.contact_id = t.id
-                ) AS reporter_ids,
-
-                -- Latest advertisement
-                (
-                    SELECT JSON_OBJECT(
-                        'id', a.id,
-                        'hash', a.hash,
-                        'name', a.name,
-                        'lat', a.lat,
-                        'lon', a.lon,
-                        'type', a.type,
-                        'flags', a.flags,
-                        'sent_at', a.sent_at,
-                        'created_at', a.created_at,
-                        'reports', COALESCE((
-                            SELECT JSON_ARRAYAGG(
-                                JSON_OBJECT(
-                                    'id', ar.id,
-                                    'reporter_id', ar.reporter_id,
-                                    'snr', ar.snr,
-                                    'path', ar.path,
-                                    'received_at', ar.received_at,
-                                    'created_at', ar.created_at
-                                )
-                            )
-                            FROM advertisement_reports ar
-                            WHERE ar.advertisement_id = a.id
-                        ), JSON_ARRAY())
-                    )
-                    FROM advertisements a
-                    WHERE a.contact_id = t.id
-                    ORDER BY a.created_at DESC
-                    LIMIT 1
-                ) AS advertisement,
-
-                -- Latest telemetry
-                (
-                    SELECT l.data
-                    FROM telemetry l
-                    WHERE l.contact_id = t.id
-                    ORDER BY l.created_at DESC
-                    LIMIT 1
-                ) AS telemetry
-
+                t.created_at
             FROM contacts t
             $extra
             ORDER BY t.id DESC
@@ -891,13 +1013,150 @@ class MeshLog {
 
         $stmt->execute();
 
-        $results = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $row['reporter_ids'] = json_decode($row['reporter_ids'], true) ?? array();
-            $row['telemetry'] = json_decode($row['telemetry'], true);
-            $row['advertisement'] = json_decode($row['advertisement'], true);
-            $results[] = $row;
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (!count($results)) {
+            return array("objects" => array());
         }
+
+        $contactIds = array_map(function($row) {
+            return (int) $row['id'];
+        }, $results);
+
+        $inClause = $this->buildIntInClause($contactIds, 'contact_id');
+        $contactIdPlaceholders = implode(',', $inClause[0]);
+        $contactIdBinds = $inClause[1];
+
+        $reporterIdsByContact = array();
+        $reportersSql = "
+            SELECT
+                a.contact_id,
+                COALESCE(JSON_ARRAYAGG(DISTINCT ar.reporter_id), JSON_ARRAY()) AS reporter_ids
+            FROM advertisements a
+            JOIN advertisement_reports ar ON ar.advertisement_id = a.id
+            WHERE a.contact_id IN ($contactIdPlaceholders)
+            GROUP BY a.contact_id
+        ";
+        $reportersStmt = $this->pdo->prepare($reportersSql);
+        foreach ($contactIdBinds as $bind) {
+            $reportersStmt->bindValue($bind[0], $bind[1], $bind[2]);
+        }
+        $reportersStmt->execute();
+        while ($row = $reportersStmt->fetch(PDO::FETCH_ASSOC)) {
+            $reporterIdsByContact[(int) $row['contact_id']] = json_decode($row['reporter_ids'], true) ?? array();
+        }
+
+        $advertisementMetaByContact = array();
+        $advertisementMetaSql = "
+            SELECT
+                a.contact_id,
+                SUBSTRING_INDEX(
+                    GROUP_CONCAT(
+                        UNIX_TIMESTAMP(a.created_at)
+                        ORDER BY a.id DESC SEPARATOR ','
+                    ),
+                    ',',
+                    2
+                ) AS recent_created_at
+            FROM advertisements a
+            WHERE a.contact_id IN ($contactIdPlaceholders)
+                AND EXISTS (
+                    SELECT 1
+                    FROM advertisement_reports ar
+                    WHERE ar.advertisement_id = a.id
+                        AND TRIM(COALESCE(ar.path, '')) <> ''
+                        AND LOWER(TRIM(ar.path)) <> 'direct'
+                )
+            GROUP BY a.contact_id
+        ";
+        $advertisementMetaStmt = $this->pdo->prepare($advertisementMetaSql);
+        foreach ($contactIdBinds as $bind) {
+            $advertisementMetaStmt->bindValue($bind[0], $bind[1], $bind[2]);
+        }
+        $advertisementMetaStmt->execute();
+        while ($row = $advertisementMetaStmt->fetch(PDO::FETCH_ASSOC)) {
+            $intervalSeconds = null;
+            $recentCreatedAt = explode(',', strval($row['recent_created_at'] ?? ''));
+            if (count($recentCreatedAt) >= 2) {
+                $latestTs = intval($recentCreatedAt[0]);
+                $previousTs = intval($recentCreatedAt[1]);
+                if ($latestTs > 0 && $previousTs > 0 && $latestTs >= $previousTs) {
+                    $intervalSeconds = $latestTs - $previousTs;
+                }
+            }
+
+            $advertisementMetaByContact[(int) $row['contact_id']] = array(
+                'interval_seconds' => $intervalSeconds,
+            );
+        }
+
+        $advertisementsByContact = array();
+        $advertisementsSql = "
+            SELECT
+                a.contact_id,
+                JSON_OBJECT(
+                    'id', a.id,
+                    'hash', a.hash,
+                    'name', a.name,
+                    'lat', a.lat,
+                    'lon', a.lon,
+                    'type', a.type,
+                    'flags', a.flags,
+                    'sent_at', a.sent_at,
+                    'created_at', a.created_at
+                ) AS advertisement
+            FROM advertisements a
+            JOIN (
+                SELECT contact_id, MAX(id) AS latest_id
+                FROM advertisements
+                WHERE contact_id IN ($contactIdPlaceholders)
+                GROUP BY contact_id
+            ) latest ON latest.latest_id = a.id
+        ";
+        $advertisementsStmt = $this->pdo->prepare($advertisementsSql);
+        foreach ($contactIdBinds as $bind) {
+            $advertisementsStmt->bindValue($bind[0], $bind[1], $bind[2]);
+        }
+        $advertisementsStmt->execute();
+        while ($row = $advertisementsStmt->fetch(PDO::FETCH_ASSOC)) {
+            $contactId = (int) $row['contact_id'];
+            $advertisement = json_decode($row['advertisement'], true);
+            if (is_array($advertisement)) {
+                $advertisement['interval_seconds'] = $advertisementMetaByContact[$contactId]['interval_seconds'] ?? null;
+            }
+            $advertisementsByContact[$contactId] = $advertisement;
+        }
+
+        $telemetryByContact = array();
+        if ($includeTelemetry) {
+            $telemetrySql = "
+                SELECT
+                    l.contact_id,
+                    l.data AS telemetry
+                FROM telemetry l
+                JOIN (
+                    SELECT contact_id, MAX(id) AS id
+                    FROM telemetry
+                    WHERE contact_id IN ($contactIdPlaceholders)
+                    GROUP BY contact_id
+                ) latest ON latest.id = l.id
+            ";
+            $telemetryStmt = $this->pdo->prepare($telemetrySql);
+            foreach ($contactIdBinds as $bind) {
+                $telemetryStmt->bindValue($bind[0], $bind[1], $bind[2]);
+            }
+            $telemetryStmt->execute();
+            while ($row = $telemetryStmt->fetch(PDO::FETCH_ASSOC)) {
+                $telemetryByContact[(int) $row['contact_id']] = json_decode($row['telemetry'], true);
+            }
+        }
+
+        foreach ($results as &$row) {
+            $contactId = (int) $row['id'];
+            $row['reporter_ids'] = $reporterIdsByContact[$contactId] ?? array();
+            $row['advertisement'] = $advertisementsByContact[$contactId] ?? null;
+            $row['telemetry'] = $telemetryByContact[$contactId] ?? null;
+        }
+        unset($row);
 
         return array("objects" => $results);
 
