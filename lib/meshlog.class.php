@@ -13,6 +13,7 @@ require_once 'meshlog.telemetry.class.php';
 require_once 'meshlog.user.class.php';
 require_once 'meshlog.report.class.php';
 require_once 'meshlog.raw_packet.class.php';
+require_once 'meshlog.decoder.php';
 
 define("MAX_COUNT", 2500);
 define("DEFAULT_COUNT", 500);
@@ -21,7 +22,7 @@ define("MAX_GETALL_REPORTS_COUNT", 5000);
 
 class MeshLog {
     private $error = '';
-    private $version = 8;
+    private $version = 9;
     private $settings = array(
         MeshlogSetting::KEY_DB_VERSION => 0,
         MeshlogSetting::KEY_MAX_CONTACT_AGE => 1814400,
@@ -130,44 +131,61 @@ class MeshLog {
         if (!isset($data['type'])) return $this->repError('invalid type');
 
         $type = $data['type'];
+        $version =$data['version'];
 
-        try {
-            $this->pdo->beginTransaction();
-            $rep = array();
-            switch ($type) {
-                case 'ADV':
-                    $rep = $this->insertAdvertisement($data, $reporter);
-                    break;
-                case 'MSG':
-                    $rep = $this->insertDirectMessage($data, $reporter);
-                    break;
-                case 'PUB':
-                    $rep = $this->insertGroupMessage($data, $reporter);
-                    break;
-                case 'SYS':
-                    $rep = $this->insertSelfReport($data, $reporter);
-                    break;
-                case 'TEL':
-                    $rep = $this->insertTelemetry($data, $reporter);
-                    break;
-                case 'RAW':
-                    $rep = $this->insertRawPacket($data, $reporter);
-                    break;
-                default:
-                    $rep = $this->repError("Unknowwn type: $type");
-                    break;
+        if ($version == 2) {
+            if ($type == 'RAW') {
+                $this->pdo->beginTransaction();
+                $rep = $this->insertRawPacket($data, $reporter, true);
+
+                if (is_array($rep) && array_key_exists("error", $rep)) {
+                    $rep["error"];
+                    $this->pdo->rollBack();
+                } else {
+                    $this->pdo->commit();
+                }
             }
+        } else if ($version == 1) {
+            try {
+                $this->pdo->beginTransaction();
+                $rep = array();
+                switch ($type) {
+                    case 'ADV':
+                        $rep = $this->insertAdvertisement($data, $reporter);
+                        break;
+                    case 'MSG':
+                        $rep = $this->insertDirectMessage($data, $reporter);
+                        break;
+                    case 'PUB':
+                        $rep = $this->insertGroupMessage($data, $reporter);
+                        break;
+                    case 'SYS':
+                        $rep = $this->insertSelfReport($data, $reporter);
+                        break;
+                    case 'TEL':
+                        $rep = $this->insertTelemetry($data, $reporter);
+                        break;
+                    case 'RAW':
+                        $rep = $this->insertRawPacket($data, $reporter);
+                        break;
+                    default:
+                        $rep = $this->repError("Unknowwn type: $type");
+                        break;
+                }
 
-            if (is_array($rep) && array_key_exists("error", $rep)) {
-                $rep["error"];
+                if (is_array($rep) && array_key_exists("error", $rep)) {
+                    $rep["error"];
+                    $this->pdo->rollBack();
+                } else {
+                    $this->pdo->commit();
+                }
+            } catch (Throwable $e) {
                 $this->pdo->rollBack();
-            } else {
-                $this->pdo->commit();
+                error_log($e);
+                throw $e;
             }
-        } catch (Throwable $e) {
-            $this->pdo->rollBack();
-            error_log($e);
-            throw $e;
+        } else {
+            error_log("Bad log version: $version");
         }
     }
 
@@ -407,12 +425,95 @@ class MeshLog {
         return $res;
     }
 
-    private function insertRawPacket($data, $reporter) {
+    private function insertRawPacket($data, $reporter, $decode=false) {
         if (!$reporter) return $this->repError('no reporter');
 
         $pkt = MeshLogRawPacket::fromJson($data, $this);
         $pkt->reporter_id = $reporter->getId();
-        return $pkt->save($this);
+        $saved = $pkt->save($this);
+
+        if (!$decode || !$saved) return $saved;
+
+        $path = strtoupper(str_replace(',', '', (string) $pkt->path));
+        $hashSize = intval($pkt->hash_size);
+        if ($hashSize < 1 || $hashSize > 3) return $saved;
+        if ($path !== '' && (!ctype_xdigit($path) || (strlen($path) % 2) !== 0)) return $saved;
+
+        $pathBytes = hex2bin($path);
+        if ($pathBytes === false) return $saved;
+        $pathLen = strlen($pathBytes);
+        if (($pathLen % $hashSize) !== 0) return $saved;
+
+        $hopCount = intval($pathLen / $hashSize);
+        if ($hopCount > 63) return $saved;
+
+        $payloadType = (intval($pkt->header) >> 2) & 0x0F;
+        $decoderKeys = array();
+        if ($payloadType === MeshLogMeshCoreDecoder::PAYLOAD_TYPE_GRP_TXT) {
+            try {
+                $stmt = $this->pdo->query("SELECT secret FROM channels WHERE enabled = 1 AND secret IS NOT NULL AND secret != ''");
+                $decoderKeys['channel_secrets'] = $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
+            } catch (Throwable $e) {
+                $decoderKeys['channel_secrets'] = array();
+            }
+        }
+
+        $packet = chr(intval($pkt->header) & 0xFF)
+            . chr((($hashSize - 1) << 6) | $hopCount)
+            . $pathBytes
+            . $pkt->payload;
+        $decoded = meshlog_decode_emshcore_packet($packet, $decoderKeys);
+        if (!($decoded['ok'] ?? false)) return $saved;
+
+        $pkt->decoded = 1;
+        $pkt->save($this);
+
+        $doc = array(
+            'version' => 1,
+            'hash' => $data['hash'] ?? null,
+            'hash_size' => $hashSize,
+            'snr' => $pkt->snr,
+            'time' => array(
+                'local' => $data['time']['local'] ?? null,
+            ),
+            'message' => array(
+                'path' => $pkt->path,
+            ),
+        );
+
+        if (($decoded['payload_type'] ?? null) === MeshLogMeshCoreDecoder::PAYLOAD_TYPE_ADVERT) {
+            $payload = $decoded['payload'] ?? array();
+            $appData = $payload['app_data'] ?? array();
+            if (!isset($payload['public_key'], $payload['timestamp'])) return $saved;
+
+            $doc['type'] = 'ADV';
+            $doc['time']['sender'] = intval($payload['timestamp']);
+            $doc['contact'] = array(
+                'pubkey' => $payload['public_key'],
+                'name' => $appData['name'] ?? '',
+                'lat' => intval(round(($appData['latitude'] ?? 0) * 1000000)),
+                'lon' => intval(round(($appData['longitude'] ?? 0) * 1000000)),
+                'type' => intval($appData['role'] ?? 0),
+                'flags' => intval($appData['flags'] ?? 0),
+            );
+            return $this->insertAdvertisement($doc, $reporter);
+        }
+
+        if (($decoded['payload_type'] ?? null) === MeshLogMeshCoreDecoder::PAYLOAD_TYPE_GRP_TXT) {
+            $payload = $decoded['payload']['decrypted'] ?? null;
+            $channelHash = $decoded['payload']['channel_hash'] ?? null;
+            if (!is_array($payload) || !isset($payload['message'], $payload['timestamp']) || !$channelHash) return $saved;
+
+            $doc['type'] = 'PUB';
+            $doc['time']['sender'] = intval($payload['timestamp']);
+            $doc['channel'] = array(
+                'hash' => $channelHash,
+            );
+            $doc['message']['text'] = $payload['message'];
+            return $this->insertGroupMessage($doc, $reporter);
+        }
+
+        return $saved;
     }
 
     private function array_path(array $array, string $path, $default = null) {
