@@ -8,7 +8,7 @@ Web side for [MeshCore logger firmware](https://github.com/Anrijs/MeshLog-Firmwa
 ## Installation
 1. Setup MySQL database
 2. Open `setup.php`, follow instructions
-3. Flash logger node [MeshCore logger firmware](https://github.com/Anrijs/MeshCore/tree/logger) (Xiao S3 and T3S3 are currently supported)
+3. Flash logger node [MeshCore logger firmware]([https://github.com/Anrijs/MeshCore/tree/logger](https://github.com/Anrijs/MeshLog-Firmware)) (Xiao S3 and T3S3 are currently supported)
 4. Conenct to logger node via serial and set configuration:
  - `log url https://<your_site>/meshlog/log.php` Where data is sent (should point to `log.php` file)
  - `log report 1800` Self-report interval, can be 0 to disable
