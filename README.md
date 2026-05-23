@@ -1,5 +1,5 @@
 # MeshLog Web
-Web side for [MeshCore logger firmware](https://github.com/Anrijs/MeshCore/tree/logger)
+Web side for [MeshCore logger firmware](https://github.com/Anrijs/MeshLog-Firmware)
 
 ## Requirements
 - PHP
